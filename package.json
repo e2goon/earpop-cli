@@ -1,0 +1,55 @@
+{
+  "name": "earpop-cli",
+  "version": "0.1.0",
+  "description": "Live speech-to-text CLI for the terminal, powered by Soniox",
+  "keywords": [
+    "asr",
+    "cli",
+    "ink",
+    "realtime",
+    "soniox",
+    "speech-to-text",
+    "stt",
+    "terminal",
+    "transcription"
+  ],
+  "license": "MIT",
+  "author": "wonmin <e2goon@gmail.com>",
+  "bin": {
+    "earpop": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.tsx",
+    "build": "tsup",
+    "check": "tsc --noEmit",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@inkjs/ui": "^2.0.0",
+    "ink": "^7.1.1",
+    "react": "^19.2.8",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/ws": "^8.18.1",
+    "oxfmt": "^0.64.0",
+    "oxlint": "^1.79.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

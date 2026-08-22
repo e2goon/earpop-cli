@@ -1,0 +1,9 @@
+packages: []
+
+# esbuild must prepare its binary at install time or tsup fails.
+onlyBuiltDependencies:
+  - esbuild
+
+# Override a global placeholder that otherwise blocks builds; allow esbuild explicitly.
+allowBuilds:
+  esbuild: true

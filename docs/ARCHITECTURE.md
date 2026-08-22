@@ -1,0 +1,100 @@
+# Architecture
+
+Why this CLI is structured the way it is. User-facing install/usage/storage paths: [README.md](../README.md). Coding style: [CONVENTIONS.md](../CONVENTIONS.md). Agent workflow: [AGENTS.md](../AGENTS.md).
+
+**Goal:** minimize time from speech to text on screen. Split **hot** and **cold** paths; keep React as a renderer only.
+
+## Layers
+
+```text
+        ┌──────────────────────────────────────────────────────────────┐
+        │  UI (ink + React) — screens/ + components/                   │
+        │  caption: status + 4 caption lines + footer (+ overlays)     │
+        │  key-setup / settings / microphone-select                    │
+        └──────────────▲───────────────────────────────────────────────┘
+                       │ one snapshot → setState per WS message
+        ┌──────────────┴───────────────────────────────────────────────┐
+        │  lib/transcription.ts (outside React)                        │
+        │  session SM, reconnect backoff, caption tail, device switch  │
+        └───▲──────────────▲──────────────────┬───────────────────────┘
+            │ frames       │ tokens/state     │ final tokens
+     ┌──────┴────────┐ ┌───┴───────┐ ┌────────▼─────┐ ┌────────────────┐
+     │ lib/audio.ts  │ │lib/soniox │ │lib/journal.ts│ │ api-key /      │
+     │ ffmpeg capture│ │ ws        │ │ JSONL append │ │ settings       │
+     └──────▲────────┘ └────▲──────┘ └───────▲──────┘ └───────▲────────┘
+         mic            Soniox          transcripts/      keychain, etc.
+```
+
+Principles:
+
+- **Hot path:** mic → socket → tokens → UI — no blocking waits.
+- **Cold path:** journal, keepalive, settings — never stall the hot path.
+- **React draws only.** Audio/WS/files live in the controller; same modules work without UI (`transcripts` commands).
+- **Single source of history:** journal owns full finals; UI holds a short **tail** so render cost stays flat.
+
+## Latency budget
+
+| Stage              | Latency    | Choice                                              |
+| ------------------ | ---------- | --------------------------------------------------- |
+| Mic → ffmpeg out   | ~100ms     | raw s16le; cut 3200-byte (100ms) frames immediately |
+| Frame → socket     | ~0         | send as soon as a frame fills; no batching          |
+| Socket             | tens of ms | `perMessageDeflate: false`                          |
+| Soniox provisional | 200–400ms  | server-side                                         |
+| Token → UI         | &lt;5ms    | one setState per message; fixed ~6-line render      |
+
+Provisional text usually appears ~0.3–0.6s after speech; the server dominates.
+
+## Data flow
+
+```text
+[hot]
+ffmpeg stdout ──3200B──▶ transcription ──sendAudio──▶ ws
+ws ──token JSON──▶ transcription ──snapshot──▶ caption (1× setState)
+
+[cold]
+transcription ──finals──▶ journal append
+soniox ──keepalive every 10s──▶ ws
+transcription ──errors──▶ reconnect backoff (1s→30s; reset after 30s stable)
+transcription ──device change──▶ restart capture only (session kept) + journal session line + settings
+```
+
+Controller rules:
+
+- If `bufferedAmount` > ~5s of audio (160KB), drop frames (stale audio).
+- During reconnect, keep capture up and drop frames (cheaper than restarting the mic).
+- One WS message → one snapshot → one UI update.
+
+## Live session lifecycle
+
+```text
+earpop
+  → resolve API key (else key-setup)
+  → resolve mic (else microphone-select)
+  → open journal → start capture + session → caption
+        m: mic overlay → restart capture only + session line + save settings
+        p: pause/resume (stop capture+session; elapsed excludes pause)
+  s / Ctrl+C → stop capture → session stop (empty frame → finished, 3s grace)
+        → close journal → unmount → print transcript path → exit 0
+```
+
+One meeting = one process = one JSONL file. No daemon. Agents consume finished files via `earpop transcripts list|view|export`.
+
+## Persistence (design)
+
+Storage locations for users are documented in the README. Architecturally:
+
+- Transcript JSONL shares the desktop app folder on macOS (`com.earpop.app`) so tools can read the same files.
+- API keys are **per region** (`us` / `eu` / `jp`); env `SONIOX_API_KEY` / `SONIOX_REGION` override stored values.
+- CLI settings use `cli-settings.json` in the same support directory (name chosen not to clash with the desktop app).
+
+## Stack choices (locked)
+
+| Role     | Choice                                               |
+| -------- | ---------------------------------------------------- |
+| UI       | ink 5 + @inkjs/ui, React 18                          |
+| WS       | `ws` (deflate off, `bufferedAmount`, binary control) |
+| Mic      | ffmpeg avfoundation child; list via `-list_devices`  |
+| CLI args | raw `process.argv` (few commands)                    |
+| Bundle   | tsup (ESM + shebang)                                 |
+
+Runtime deps: ink, @inkjs/ui, react, ws.
