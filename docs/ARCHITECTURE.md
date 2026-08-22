@@ -1,6 +1,14 @@
 # Architecture
 
-Why this CLI is structured the way it is. User-facing install/usage/storage paths: [README.md](../README.md). Coding style: [CONVENTIONS.md](../CONVENTIONS.md). Agent workflow: [AGENTS.md](../AGENTS.md).
+Why this CLI is structured the way it is.
+
+| Doc                                  | Role                                          |
+| ------------------------------------ | --------------------------------------------- |
+| [README.md](../README.md)            | Users and npm: install, usage, env, storage   |
+| [AGENTS.md](../AGENTS.md)            | Agent workflow and tooling                    |
+| [CONVENTIONS.md](./CONVENTIONS.md)   | Code style                                    |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Commits and pull requests                     |
+| **This file**                        | Design intent, layers, latency, stack choices |
 
 **Goal:** minimize time from speech to text on screen. Split **hot** and **cold** paths; keep React as a renderer only.
 
@@ -89,12 +97,14 @@ Storage locations for users are documented in the README. Architecturally:
 
 ## Stack choices (locked)
 
-| Role     | Choice                                               |
-| -------- | ---------------------------------------------------- |
-| UI       | ink 5 + @inkjs/ui, React 18                          |
-| WS       | `ws` (deflate off, `bufferedAmount`, binary control) |
-| Mic      | ffmpeg avfoundation child; list via `-list_devices`  |
-| CLI args | raw `process.argv` (few commands)                    |
-| Bundle   | tsup (ESM + shebang)                                 |
+| Role     | Choice                                                             |
+| -------- | ------------------------------------------------------------------ |
+| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7          |
+| Package  | pnpm; npm-compatible `prepublishOnly` (`tsup`)                     |
+| UI       | ink 7 + @inkjs/ui, React 19                                        |
+| WS       | `ws` (deflate off, `bufferedAmount`, binary control)               |
+| Mic      | ffmpeg avfoundation child; list via `-list_devices`                |
+| CLI args | raw `process.argv` (few commands)                                  |
+| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only |
 
 Runtime deps: ink, @inkjs/ui, react, ws.
