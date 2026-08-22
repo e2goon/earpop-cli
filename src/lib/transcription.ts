@@ -335,7 +335,7 @@ export function createTranscription({
             journal.session(device);
             await saveSettings({ microphone: device });
           } catch {
-            stateMessage = "Failed to restore microphone. Press s to quit, then run again";
+            stateMessage = "Failed to restore microphone. Press ESC to quit, then run again";
           }
         }
         emit(true);

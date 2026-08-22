@@ -1,4 +1,4 @@
-import { Text, Box } from "ink";
+import { Text, Box, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAlternateScreen } from "#/hooks/use-alternate-screen.js";
@@ -24,14 +24,7 @@ import { KeySetup } from "#/screens/key-setup.js";
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { RegionSelect } from "#/screens/region-select.js";
 
-type LivePhase =
-  | "boot"
-  | "region-select"
-  | "key-setup"
-  | "mic-select"
-  | "live"
-  | "cleanup"
-  | "fatal";
+type LivePhase = "boot" | "region-select" | "key-setup" | "mic-select" | "live" | "ended" | "fatal";
 
 const STOP_TIMEOUT_MS = 3_000;
 
@@ -43,6 +36,18 @@ interface MicOverlay {
 }
 
 const CLOSED_OVERLAY: MicOverlay = { open: false, microphones: [], loading: false };
+
+function FatalScreen(props: { message: string; onQuit: () => void }) {
+  useInput((_input, key) => {
+    if (key.escape) props.onQuit();
+  });
+  return (
+    <Box flexDirection="column">
+      <Text color="red">{`Cannot continue transcription: ${props.message}`}</Text>
+      <Text dimColor>Press ESC to quit, fix the issue, then run earpop again</Text>
+    </Box>
+  );
+}
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,26 +73,46 @@ export function LiveApp() {
     quit(path === null ? undefined : () => printSessionEnd(path));
   }, []);
 
-  // First Ctrl+C / quit runs orderly cleanup; a second press force-exits immediately.
+  // First Esc / Ctrl+C: stop session, keep path on screen. Second press: exit.
+  const sessionEndedRef = useRef(false);
   const exitStartedRef = useRef(false);
+
+  const copyJournalPath = useCallback(() => {
+    const path = journalPathRef.current;
+    if (path === null) return;
+    const copied = copyToClipboard(path);
+    if (!copied) process.stdout.write(osc52Sequence(path));
+  }, []);
+
   const requestExit = useCallback(() => {
-    if (exitStartedRef.current) {
-      try {
-        void controllerRef.current?.stop();
-      } catch {
-        // Prefer exit over a stuck stop().
+    if (sessionEndedRef.current || exitStartedRef.current || fatalMessageRef.current !== null) {
+      if (exitStartedRef.current) {
+        try {
+          void controllerRef.current?.stop();
+        } catch {
+          // Prefer exit over a stuck stop().
+        }
+        process.exit(130);
       }
-      process.exit(130);
+      exitStartedRef.current = true;
+      finish();
+      return;
     }
-    exitStartedRef.current = true;
+
+    sessionEndedRef.current = true;
+    copyJournalPath();
+    setOverlay(CLOSED_OVERLAY);
+    setPhase("ended");
+
     const controller = controllerRef.current;
     if (controller === null) {
-      process.exit(0);
+      finish();
+      return;
     }
-    setPhase("cleanup");
-    // Race stop() so a hung session finish cannot block exit forever.
-    void Promise.race([controller.stop(), delay(STOP_TIMEOUT_MS)]).then(finish);
-  }, [finish]);
+    void Promise.race([controller.stop(), delay(STOP_TIMEOUT_MS)]).then(() => {
+      // Stay on ended screen until the next Esc / Ctrl+C.
+    });
+  }, [copyJournalPath, finish]);
   useInterrupt(requestExit);
 
   async function startLive({
@@ -173,16 +198,12 @@ export function LiveApp() {
   const [, setRenderTick] = useState(0);
   const repaint = useCallback(() => setRenderTick((value) => value + 1), []);
   useAlternateScreen({
-    active: phase === "live" || phase === "cleanup" || phase === "boot",
+    active: phase === "live" || phase === "ended" || phase === "boot",
     onRepaint: repaint,
   });
 
   if (phase === "boot") {
     return <Text>Preparing…</Text>;
-  }
-
-  if (phase === "cleanup") {
-    return <Text>Cleaning up…</Text>;
   }
 
   if (phase === "region-select") {
@@ -220,7 +241,7 @@ export function LiveApp() {
             });
             if (!result.ok) {
               setKeyError(
-                `${result.message}\nIf the region is wrong, press s to quit, then change it with 'earpop settings'.`,
+                `${result.message}\nIf the region is wrong, press ESC to quit, then change it with 'earpop settings'.`,
               );
               setVerifying(false);
               return;
@@ -276,12 +297,7 @@ export function LiveApp() {
 
   if (phase === "fatal") {
     return (
-      <Box flexDirection="column">
-        <Text color="red">
-          {`Cannot continue transcription: ${fatalMessageRef.current ?? "Unknown error"}`}
-        </Text>
-        <Text dimColor>Press s to quit, fix the issue, then run earpop again</Text>
-      </Box>
+      <FatalScreen message={fatalMessageRef.current ?? "Unknown error"} onQuit={requestExit} />
     );
   }
 
@@ -298,17 +314,19 @@ export function LiveApp() {
       pendingTokens={snapshot.pendingTokens}
       elapsedSeconds={snapshot.elapsedSeconds}
       journalPath={journalPathRef.current ?? undefined}
+      ended={phase === "ended"}
       microphoneOverlay={overlay}
       onTogglePause={() => {
+        if (phase === "ended") return;
         // Pause copies the transcript path to the clipboard on enter.
         if (snapshot.state !== "paused" && journalPathRef.current !== null) {
-          const copied = copyToClipboard(journalPathRef.current);
-          if (!copied) process.stdout.write(osc52Sequence(journalPathRef.current));
+          copyJournalPath();
         }
         void controllerRef.current?.togglePause();
       }}
       onQuit={requestExit}
       onOpenMicrophones={() => {
+        if (phase === "ended") return;
         setOverlay({ open: true, microphones: [], loading: true });
         void listMicrophones()
           .then((found) => {

@@ -81,8 +81,10 @@ earpop
   → open journal → start capture + session → caption
         m: mic overlay → restart capture only + session line + save settings
         p: pause/resume (stop capture+session; elapsed excludes pause)
-  s / Ctrl+C → stop capture → session stop (empty frame → finished, 3s grace)
-        → close journal → unmount → print transcript path → exit 0
+  ESC → stop capture → session stop (empty frame → finished, 3s grace)
+        → show transcript path (clipboard) and wait
+  ESC again → unmount → print transcript path → exit 0
+  Ctrl+C follows the same two-step exit
 ```
 
 One meeting = one process = one JSONL file. No daemon. Agents consume finished files via `earpop transcripts list|view|export`.

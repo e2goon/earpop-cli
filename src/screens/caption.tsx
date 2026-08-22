@@ -19,6 +19,7 @@ export interface CaptionScreenProps {
     error?: string;
   };
   journalPath?: string;
+  ended?: boolean;
   onTogglePause: () => void;
   onQuit: () => void;
   onOpenMicrophones: () => void;
@@ -202,17 +203,21 @@ export function CaptionScreen(props: CaptionScreenProps) {
 
   useInput((input, key) => {
     if (props.microphoneOverlay.open) return;
-    if (input === "p") {
-      if (props.state === "paused") props.onQuit();
-      else props.onTogglePause();
+
+    if (props.ended) {
+      if (key.escape) props.onQuit();
       return;
     }
-    if (key.escape && props.state === "paused") {
+
+    if (input === "p") {
       props.onTogglePause();
       return;
     }
+    if (key.escape) {
+      props.onQuit();
+      return;
+    }
     if (input === "m") props.onOpenMicrophones();
-    else if (input === "s") props.onQuit();
   });
 
   const segments = buildSegments({
@@ -220,18 +225,17 @@ export function CaptionScreen(props: CaptionScreenProps) {
     pendingTokens: props.pendingTokens,
   });
   const captionLines = wrapSegments({ segments, width: columns });
+  const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
 
   return (
     <Box flexDirection="column">
       <StatusLine
-        state={props.state}
+        state={props.ended ? "stopped" : props.state}
         stateMessage={props.stateMessage}
         elapsedSeconds={props.elapsedSeconds}
       />
 
-      {props.state === "paused" && props.journalPath !== undefined && (
-        <Text color="yellow">{shortPath(props.journalPath)} copied to clipboard</Text>
-      )}
+      {showPath && <Text color="yellow">{shortPath(props.journalPath!)} copied to clipboard</Text>}
 
       {props.microphoneOverlay.open ? (
         <MicrophoneSelect
@@ -258,9 +262,11 @@ export function CaptionScreen(props: CaptionScreenProps) {
 
       <Box width="100%">
         <Text dimColor>
-          {props.state === "paused"
-            ? "p quit · ESC resume · m mic · s quit"
-            : "p pause · m mic · s quit"}
+          {props.ended
+            ? "ESC quit"
+            : props.state === "paused"
+              ? "p resume · m mic · ESC end"
+              : "p pause · m mic · ESC end"}
         </Text>
       </Box>
     </Box>
