@@ -4,7 +4,7 @@ Live speech-to-text in the terminal via Soniox realtime STT. The binary name is 
 
 ## Requirements
 
-- **Node.js** 20+
+- **Node.js** 24+ (Active LTS)
 - **ffmpeg** on `PATH` (macOS: `brew install ffmpeg`)
 - **Soniox API key** from [Soniox](https://soniox.com). The key’s project region (`us` / `eu` / `jp`) must match the CLI region.
 
@@ -68,4 +68,7 @@ MIT © wonmin
 ## Contributing
 
 - Users: this README.
-- Agents / contributors editing code: [AGENTS.md](./AGENTS.md), [CONVENTIONS.md](./CONVENTIONS.md), [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+- Agents: [AGENTS.md](./AGENTS.md).
+- Code style: [docs/CONVENTIONS.md](./docs/CONVENTIONS.md).
+- Commits / PRs: [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md).
+- Design: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).

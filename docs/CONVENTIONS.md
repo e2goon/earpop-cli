@@ -1,11 +1,19 @@
 # Conventions
 
-How to write code in this repository. Agent workflow: [AGENTS.md](./AGENTS.md). Design intent: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+How to write code in this repository.
+
+| Doc | Role |
+| --- | --- |
+| [README.md](../README.md) | Users and npm |
+| [AGENTS.md](../AGENTS.md) | Agent workflow and tooling |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Commits and pull requests |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Why the system is shaped this way |
+| **This file** | Code style and TypeScript rules |
 
 ## Language
 
-- **English only** for UI strings, docs, commit messages when editing for the public package, and code comments.
-- Comments: only non-obvious **why**. No narration of what the next line does.
+- **English:** UI strings, code comments, and repo docs intended for npm/`README` readers. Comments: only non-obvious **why** — no narration of what the next line does.
+- **Korean:** commit subject description + body, and PR title description + body. Conventional Commit **types** (`feat`, `fix`, …) and optional **scopes** stay English. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Naming and modules
 

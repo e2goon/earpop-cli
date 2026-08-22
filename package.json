@@ -31,7 +31,7 @@
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "tsup"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
@@ -50,6 +50,7 @@
     "typescript": "^7.0.2"
   },
   "engines": {
-    "node": ">=20"
-  }
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.22.0"
 }
