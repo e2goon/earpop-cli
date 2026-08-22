@@ -16,13 +16,13 @@ Do not duplicate those docs here — follow the link for the topic.
 
 - Prefer the smallest change that satisfies the request.
 - Follow [docs/CONVENTIONS.md](./docs/CONVENTIONS.md) for every code edit.
-- Follow [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) for commit messages and PR titles/bodies when the human asks to commit or open a PR (**Korean** description/body; English `feat`/`fix`/… types).
+- Follow [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) for commit messages and PR titles/bodies when the human asks to commit or open a PR.
 - Respect [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) hot/cold path and layer boundaries.
 - **Do not** `publish`, **commit**, or **push** unless the human asked.
 - **Remote is Cursor Origin only.** Do **not** use `gh` (GitHub CLI), open GitHub PRs/issues, or invent a GitHub / `repository` URL.
 - **Do not** add `Co-authored-by: Cursor <cursoragent@cursor.com>` (or similar) to commit messages. If a hook or client inserts it, strip it before finishing.
 - **Do not** commit `.cursor/` (gitignored). Shared guidance lives in this file and `docs/`. Commit `.vscode/` Oxc recommendations only.
-- Code / UI / npm-facing docs stay **English**; commit and PR prose are **Korean** (see CONVENTIONS / CONTRIBUTING).
+- Public package: keep code / UI / npm-facing docs **English** (see CONVENTIONS).
 
 ## Tooling
 
