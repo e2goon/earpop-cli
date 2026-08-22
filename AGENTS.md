@@ -2,13 +2,13 @@
 
 How coding agents should work in this repository.
 
-| Doc | Role |
-| --- | --- |
-| [README.md](./README.md) | Users and npm: install, usage, env, storage |
-| [docs/CONVENTIONS.md](./docs/CONVENTIONS.md) | How to write code (style and TypeScript rules) |
+| Doc                                            | Role                                             |
+| ---------------------------------------------- | ------------------------------------------------ |
+| [README.md](./README.md)                       | Users and npm: install, usage, env, storage      |
+| [docs/CONVENTIONS.md](./docs/CONVENTIONS.md)   | How to write code (style and TypeScript rules)   |
 | [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) | Commits and pull requests (Conventional Commits) |
-| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Why the system is shaped this way |
-| **This file** | Agent workflow, tooling, and boundaries |
+| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Why the system is shaped this way                |
+| **This file**                                  | Agent workflow, tooling, and boundaries          |
 
 Do not duplicate those docs here — follow the link for the topic.
 

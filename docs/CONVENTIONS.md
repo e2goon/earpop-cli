@@ -2,13 +2,13 @@
 
 How to write code in this repository.
 
-| Doc | Role |
-| --- | --- |
-| [README.md](../README.md) | Users and npm |
-| [AGENTS.md](../AGENTS.md) | Agent workflow and tooling |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Commits and pull requests |
+| Doc                                  | Role                              |
+| ------------------------------------ | --------------------------------- |
+| [README.md](../README.md)            | Users and npm                     |
+| [AGENTS.md](../AGENTS.md)            | Agent workflow and tooling        |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Commits and pull requests         |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Why the system is shaped this way |
-| **This file** | Code style and TypeScript rules |
+| **This file**                        | Code style and TypeScript rules   |
 
 ## Language
 

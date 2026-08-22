@@ -25,18 +25,18 @@ Rules:
 - **breaking change**: `feat!:` / `fix!:` and/or a `BREAKING CHANGE:` footer (token stays English; explanation may be Korean)
 - Do **not** add `Co-authored-by: Cursor <…>` trailers
 
-| Type | Use for | SemVer (when releasing) |
-| --- | --- | --- |
-| `feat` | User-facing feature | minor |
-| `fix` | Bug fix | patch |
-| `docs` | Documentation only | — |
-| `refactor` | Code change with no feature/fix | — |
-| `perf` | Performance improvement | patch (often) |
-| `test` | Tests only | — |
-| `build` | Build system or bundler | — |
-| `ci` | CI configuration | — |
-| `chore` | Maintenance that does not affect users | — |
-| `style` | Formatting only (no logic change) | — |
+| Type       | Use for                                | SemVer (when releasing) |
+| ---------- | -------------------------------------- | ----------------------- |
+| `feat`     | User-facing feature                    | minor                   |
+| `fix`      | Bug fix                                | patch                   |
+| `docs`     | Documentation only                     | —                       |
+| `refactor` | Code change with no feature/fix        | —                       |
+| `perf`     | Performance improvement                | patch (often)           |
+| `test`     | Tests only                             | —                       |
+| `build`    | Build system or bundler                | —                       |
+| `ci`       | CI configuration                       | —                       |
+| `chore`    | Maintenance that does not affect users | —                       |
+| `style`    | Formatting only (no logic change)      | —                       |
 
 Examples:
 
@@ -60,12 +60,15 @@ Open and merge PRs on **Cursor Origin** (UI or Cursor tooling). **Never** use th
 
 ```markdown
 ## Summary
+
 - …
 
 ## Test plan
+
 - [ ] …
 
 ## Notes
+
 <!-- Optional: breaking changes, follow-ups -->
 ```
 
