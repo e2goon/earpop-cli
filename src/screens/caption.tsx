@@ -136,13 +136,8 @@ function hasCaptionText(segments: Segment[]) {
   return segments.some((segment) => segment.color === undefined && segment.text.length > 0);
 }
 
-function SpeakerIdList(props: { ids: string[] }) {
-  return props.ids.map((id, index) => (
-    <Text key={id}>
-      {index > 0 ? <Text dimColor>, </Text> : null}
-      <Text color={speakerColor(id)}>{`S${id}`}</Text>
-    </Text>
-  ));
+function formatSpeakerIds(ids: string[]) {
+  return ids.map((id) => `S${id}`).join(", ");
 }
 
 function buildSegments({
@@ -160,10 +155,11 @@ function buildSegments({
   const push = ({ token, dim }: { token: Token; dim: boolean }) => {
     if (!speakerAllowed({ speaker: token.speaker, focusedSpeakers })) return;
     if (token.speaker !== undefined && token.speaker !== lastSpeaker) {
+      const color = speakerColor(token.speaker);
       segments.push({
         text: lastSpeaker === undefined ? `[S${token.speaker}] ` : ` [S${token.speaker}] `,
         dim,
-        color: speakerColor(token.speaker),
+        ...(color !== undefined ? { color } : {}),
       });
       lastSpeaker = token.speaker;
     }
@@ -268,10 +264,7 @@ function StatusLine(props: {
       <Box>
         <StatusLabel state={props.state} stateMessage={props.stateMessage} />
         {props.focusedSpeakers !== undefined && props.focusedSpeakers.length > 0 && (
-          <Text dimColor>
-            {" · focus: "}
-            <SpeakerIdList ids={props.focusedSpeakers} />
-          </Text>
+          <Text dimColor>{` · focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
         )}
       </Box>
       <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
@@ -407,23 +400,24 @@ export function CaptionScreen(props: CaptionScreenProps) {
         <Box flexDirection="column" height={CAPTION_LINE_COUNT}>
           {focusEmpty ? (
             <Text dimColor>
-              No speech from <SpeakerIdList ids={focusedSpeakerIds ?? []} />
-              {heardIds.length > 0 ? (
-                <>
-                  {" · heard "}
-                  <SpeakerIdList ids={heardIds} />
-                </>
-              ) : null}
-              {" · 0 show all"}
+              {`No speech from ${formatSpeakerIds(focusedSpeakerIds ?? [])}${
+                heardIds.length > 0 ? ` · heard ${formatSpeakerIds(heardIds)}` : ""
+              } · 0 show all`}
             </Text>
           ) : (
             captionLines.map((line, index) => (
               <Text key={index}>
-                {line.map((piece, pieceIndex) => (
-                  <Text key={pieceIndex} dimColor={piece.dim} color={piece.color}>
-                    {piece.text}
-                  </Text>
-                ))}
+                {line.map((piece, pieceIndex) =>
+                  piece.color !== undefined ? (
+                    <Text key={pieceIndex} dimColor={piece.dim} color={piece.color}>
+                      {piece.text}
+                    </Text>
+                  ) : (
+                    <Text key={pieceIndex} dimColor={piece.dim}>
+                      {piece.text}
+                    </Text>
+                  ),
+                )}
               </Text>
             ))
           )}

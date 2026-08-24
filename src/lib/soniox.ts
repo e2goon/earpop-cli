@@ -63,7 +63,7 @@ interface ServerResponse {
 
 function toToken(raw: ServerToken) {
   const token: Token = { text: raw.text ?? "", isFinal: raw.is_final === true };
-  if (raw.speaker !== undefined) token.speaker = raw.speaker;
+  if (raw.speaker !== undefined) token.speaker = String(raw.speaker);
   if (raw.start_ms !== undefined) token.startMs = raw.start_ms;
   if (raw.end_ms !== undefined) token.endMs = raw.end_ms;
   if (raw.language !== undefined) token.language = raw.language;

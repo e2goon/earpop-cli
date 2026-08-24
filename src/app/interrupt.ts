@@ -20,7 +20,9 @@ function handleInterrupt() {
 export function installInterruptListeners() {
   if (process.stdin.isTTY) {
     process.stdin.on("data", (chunk) => {
-      if ((chunk as Buffer).includes(0x03)) handleInterrupt();
+      // Must use a Buffer: String#include(0x03) coerces to "3" and matches the digit key.
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+      if (bytes.includes(0x03)) handleInterrupt();
     });
   }
   process.on("SIGINT", () => handleInterrupt());
