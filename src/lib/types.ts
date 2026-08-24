@@ -1,3 +1,5 @@
+import type { SttLanguage } from "#/lib/languages";
+
 export interface Token {
   text: string;
   isFinal: boolean;
@@ -23,6 +25,7 @@ export interface SttOptions {
   apiKey: string;
   model?: string;
   region?: SttRegion;
+  languageHints?: SttLanguage[];
   clientReferenceId?: string;
   /** Recent final transcript tail; biases recognition on reconnect. */
   contextText?: string;
@@ -58,4 +61,5 @@ export interface Journal {
 export interface CliSettings {
   microphone?: string;
   region?: SttRegion;
+  languages?: SttLanguage[];
 }

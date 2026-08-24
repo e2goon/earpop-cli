@@ -19,7 +19,7 @@ npm i -g earpop-cli
 
 ```bash
 earpop                       # live transcription
-earpop settings              # mic + API key
+earpop settings              # mic + languages + API key
 earpop transcripts list
 earpop transcripts view <id>
 earpop transcripts export <id>
@@ -31,12 +31,12 @@ First run prompts for API key and microphone.
 
 ## Environment & storage
 
-| Variable | Description |
-| --- | --- |
-| `SONIOX_API_KEY` | Wins over keychain/file |
-| `SONIOX_REGION` | `us` \| `eu` \| `jp` (default `us`) |
-| `EARPOP_CAPTURE_BIN` | Dev override path to capture binary (skips integrity) |
-| `EARPOP_SKIP_CAPTURE_INTEGRITY` | `1` to skip SHA-256 checks |
+| Variable                        | Description                                           |
+| ------------------------------- | ----------------------------------------------------- |
+| `SONIOX_API_KEY`                | Wins over keychain/file                               |
+| `SONIOX_REGION`                 | `us` \| `eu` \| `jp` (default `us`)                   |
+| `EARPOP_CAPTURE_BIN`            | Dev override path to capture binary (skips integrity) |
+| `EARPOP_SKIP_CAPTURE_INTEGRITY` | `1` to skip SHA-256 checks                            |
 
 API keys: macOS Keychain `com.earpop.app` / `soniox-api-key-<region>`; elsewhere `~/.earpop/credentials-<region>`.
 

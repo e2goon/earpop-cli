@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { normalizeLanguageHints } from "#/lib/languages.js";
 import type { CliSettings } from "#/lib/types";
 
 // Serialize concurrent saves so writers do not clobber each other.
@@ -29,6 +30,8 @@ export async function loadSettings() {
     if (parsed.region === "us" || parsed.region === "eu" || parsed.region === "jp") {
       settings.region = parsed.region;
     }
+    if (Array.isArray(parsed.languages))
+      settings.languages = normalizeLanguageHints(parsed.languages);
     return settings;
   } catch {
     return {};
@@ -41,6 +44,9 @@ async function writeThrough(patch: Partial<CliSettings>) {
 
   const current = await loadSettings();
   const merged = { ...current, ...patch };
+  if (patch.languages !== undefined) {
+    merged.languages = normalizeLanguageHints(patch.languages);
+  }
 
   const tempPath = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   try {
