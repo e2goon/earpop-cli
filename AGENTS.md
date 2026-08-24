@@ -19,7 +19,7 @@ Do not duplicate those docs here — follow the link for the topic.
 - Follow [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) for commit messages and PR titles/bodies when the human asks to commit or open a PR.
 - Respect [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) hot/cold path and layer boundaries.
 - **Do not** `publish`, **commit**, or **push** unless the human asked.
-- **CI / release builds:** GitHub (`github` remote) — [`.github/workflows/capture.yml`](./.github/workflows/capture.yml). Prefer `gh` for GitHub PRs when the human asks.
+- **CI / release builds:** GitHub `origin` — [`.github/workflows/capture.yml`](./.github/workflows/capture.yml). Prefer `gh` for GitHub PRs when the human asks.
 - **Do not** add `Co-authored-by: Cursor <cursoragent@cursor.com>` (or similar) to commit messages. If a hook or client inserts it, strip it before finishing.
 - **Do not** commit `.cursor/` (gitignored). Shared guidance lives in this file and `docs/`. Commit `.vscode/` Oxc recommendations only.
 - Public package: keep code / UI / npm-facing docs **English** (see CONVENTIONS).
