@@ -18,7 +18,7 @@ import {
   type SttLanguage,
 } from "#/lib/languages.js";
 import { listMicrophones } from "#/lib/microphones.js";
-import { resolveRegion } from "#/lib/region.js";
+import { regionLabel, resolveRegion } from "#/lib/region.js";
 import { saveSettings, loadSettings } from "#/lib/settings.js";
 import { STT_MODEL } from "#/lib/soniox.js";
 import { verifyApiKey } from "#/lib/verify-key.js";
@@ -36,10 +36,6 @@ const STOP_TIMEOUT_MS = 3_000;
 
 const CLOSED_OVERLAY: CaptionOverlay = { kind: "none" };
 
-function regionLabel(value: SttRegion) {
-  return value === "us" ? "United States" : value === "eu" ? "Europe" : "Japan (Tokyo)";
-}
-
 function FatalScreen(props: { message: string; onQuit: () => void }) {
   useInput((_input, key) => {
     if (key.escape) props.onQuit();
@@ -56,10 +52,15 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function patchSettingsOverlay(
-  prev: CaptionOverlay,
-  patch: Partial<Extract<CaptionOverlay, { kind: "settings" }>>,
-): CaptionOverlay {
+type SettingsOverlay = Extract<CaptionOverlay, { kind: "settings" }>;
+
+function patchSettingsOverlay({
+  prev,
+  patch,
+}: {
+  prev: CaptionOverlay;
+  patch: Partial<SettingsOverlay>;
+}) {
   if (prev.kind !== "settings") return prev;
   return { ...prev, ...patch };
 }
@@ -382,7 +383,8 @@ export function LiveApp() {
             microphonesLoading: false,
             currentMicrophone: settings.microphone ?? snapshot.device,
             region: resolved,
-            languages: normalizeLanguageHints(settings.languages),
+            // Live session hints are source of truth while connected.
+            languages: languageHintsRef.current,
             hasApiKey: key !== null,
           });
         })();
@@ -401,39 +403,90 @@ export function LiveApp() {
         setOverlay(CLOSED_OVERLAY);
       }}
       onSettingsPickMicrophone={(name) => {
-        void controllerRef.current?.switchMicrophone(name).then(() => {
-          setOverlay((prev) =>
-            patchSettingsOverlay(prev, {
-              currentMicrophone: name,
-              notice: `Microphone set to ${name}`,
-            }),
-          );
-        });
+        void controllerRef.current
+          ?.switchMicrophone(name)
+          .then(() => {
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  currentMicrophone: name,
+                  notice: `Microphone set to ${name}`,
+                },
+              }),
+            );
+          })
+          .catch((error: unknown) => {
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  notice: `Failed to set microphone: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                },
+              }),
+            );
+          });
       }}
       onSettingsPickLanguages={(codes) => {
         languageHintsRef.current = normalizeLanguageHints(codes);
-        void controllerRef.current?.setLanguageHints(codes).then(() => {
-          setOverlay((prev) =>
-            patchSettingsOverlay(prev, {
-              languages: languageHintsRef.current,
-              notice: `Languages set to ${languageHintLabel(languageHintsRef.current)}`,
-            }),
-          );
-        });
+        void controllerRef.current
+          ?.setLanguageHints(codes)
+          .then(() => {
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  languages: languageHintsRef.current,
+                  notice: `Languages set to ${languageHintLabel(languageHintsRef.current)}`,
+                },
+              }),
+            );
+          })
+          .catch((error: unknown) => {
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  languages: languageHintsRef.current,
+                  notice: `Failed to set languages: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                },
+              }),
+            );
+          });
       }}
       onSettingsPickRegion={(next) => {
-        void saveSettings({ region: next }).then(async () => {
-          const key = await loadApiKey(next);
-          setOverlay((prev) =>
-            patchSettingsOverlay(prev, {
-              region: next,
-              hasApiKey: key !== null,
-              notice: `Region set to ${regionLabel(next)} — applies after restart${
-                key === null ? " (register an API key for this region)" : ""
-              }`,
-            }),
-          );
-        });
+        void saveSettings({ region: next })
+          .then(async () => {
+            const key = await loadApiKey(next);
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  region: next,
+                  hasApiKey: key !== null,
+                  notice: `Region set to ${regionLabel(next)} — applies after restart${
+                    key === null ? " (register an API key for this region)" : ""
+                  }`,
+                },
+              }),
+            );
+          })
+          .catch((error: unknown) => {
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  notice: `Failed to save region: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                },
+              }),
+            );
+          });
       }}
       onSettingsChangeApiKey={(key) => {
         const region =
@@ -441,18 +494,24 @@ export function LiveApp() {
         void saveApiKey({ key, region })
           .then(() => {
             setOverlay((prev) =>
-              patchSettingsOverlay(prev, {
-                hasApiKey: true,
-                notice: `Saved API key for ${regionLabel(region)} — applies after restart`,
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  hasApiKey: true,
+                  notice: `Saved API key for ${regionLabel(region)} — applies after restart`,
+                },
               }),
             );
           })
           .catch((error: unknown) => {
             setOverlay((prev) =>
-              patchSettingsOverlay(prev, {
-                notice: `Failed to save API key: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  notice: `Failed to save API key: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                },
               }),
             );
           });
@@ -460,14 +519,30 @@ export function LiveApp() {
       onSettingsDeleteApiKey={() => {
         const region =
           overlay.kind === "settings" ? (overlay.region ?? regionRef.current) : regionRef.current;
-        void deleteApiKey(region).then(() => {
-          setOverlay((prev) =>
-            patchSettingsOverlay(prev, {
-              hasApiKey: false,
-              notice: `Deleted API key for ${regionLabel(region)} — applies after restart`,
-            }),
-          );
-        });
+        void deleteApiKey(region)
+          .then(() => {
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  hasApiKey: false,
+                  notice: `Deleted API key for ${regionLabel(region)} — applies after restart`,
+                },
+              }),
+            );
+          })
+          .catch((error: unknown) => {
+            setOverlay((prev) =>
+              patchSettingsOverlay({
+                prev,
+                patch: {
+                  notice: `Failed to delete API key: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                },
+              }),
+            );
+          });
       }}
     />
   );

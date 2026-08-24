@@ -60,6 +60,8 @@ export function createTranscription({
 
   let stopped = false;
   let connecting = false;
+  // Invalidate in-flight startSession() so soft-reconnect cannot adopt a stale socket.
+  let connectGeneration = 0;
 
   let paused = false;
   let pausedAtMs = 0;
@@ -170,19 +172,20 @@ export function createTranscription({
   async function connect() {
     if (stopped || paused || connecting) return;
     connecting = true;
+    const generation = ++connectGeneration;
     state = "connecting";
     stateMessage = undefined;
     emit(true);
 
     try {
-      session = await startSession({
+      const nextSession = await startSession({
         apiKey,
         clientReferenceId,
         region,
         languageHints,
         contextText: speechContext.length > 0 ? speechContext : undefined,
         onEvent: (event) => {
-          if (stopped) return;
+          if (stopped || generation !== connectGeneration) return;
           if (event.type === "state") {
             if (event.state === "listening") {
               connecting = false;
@@ -211,17 +214,24 @@ export function createTranscription({
             pendingTokens = event.pending;
             // Captions first: do not coalesce provisional tokens behind the paint interval.
             emit(true);
-          } else if (event.type === "finished") {
           }
         },
       });
+      if (generation !== connectGeneration || stopped || paused) {
+        void nextSession.stop().catch(() => {});
+        if (generation === connectGeneration) connecting = false;
+        return;
+      }
+      session = nextSession;
     } catch (error) {
+      if (generation !== connectGeneration) return;
       connecting = false;
       if (stopped) return;
       scheduleReconnect(error instanceof Error ? error.message : String(error));
       return;
     }
 
+    if (generation !== connectGeneration) return;
     connecting = false;
     if (stopped || paused) {
       const orphan = session;
@@ -286,6 +296,7 @@ export function createTranscription({
 
         if (!paused) {
           paused = true;
+          connectGeneration += 1;
           pausedAtMs = Date.now();
           state = "paused";
           pendingTokens = [];
@@ -357,7 +368,7 @@ export function createTranscription({
       return enqueue(async () => {
         if (stopped) return;
         const next = normalizeLanguageHints(codes);
-        if (next.join(",") === languageHints.join(",")) return;
+        if (sameLanguageHints(languageHints, next)) return;
 
         languageHints = next;
         await saveSettings({ languages: next });
@@ -372,6 +383,10 @@ export function createTranscription({
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
         }
+        // Drop provisional captions from the previous language session.
+        pendingTokens = [];
+        // Invalidate any in-flight connect() before opening a replacement session.
+        connectGeneration += 1;
         connecting = false;
         try {
           await session?.stop();
@@ -388,6 +403,7 @@ export function createTranscription({
       return enqueue(async () => {
         if (stopped) return;
         stopped = true;
+        connectGeneration += 1;
         clearTimers();
 
         await teardownIO();
@@ -396,4 +412,10 @@ export function createTranscription({
       });
     },
   };
+}
+
+function sameLanguageHints(a: SttLanguage[], b: SttLanguage[]) {
+  if (a.length !== b.length) return false;
+  const other = new Set(b);
+  return a.every((code) => other.has(code));
 }
