@@ -1,7 +1,7 @@
 {
   "earpop-capture-darwin-arm64": "7ab173a0161ed8acee456001222b461592663bd131efa076810269fa085a7bd2",
   "earpop-capture-darwin-x64": "1578bb907e309f5498671006df20e4cdb87b02510f41f6e9a9f9b97c4624487c",
-  "earpop-capture-win32-x64": "26bc7074c8e7ee4b08be0c1e354a09ba271b8ddeaa512a025e844dfc265f1697",
+  "earpop-capture-win32-x64": "66ececb7099772867ada817a62a0966fae445bbac0829b7c654325b0a55f916f",
   "earpop-capture-linux-x64": "39e9aad74ac618dfbad9c27a7e6037e2e5aac130802467bb676658d9d73d3d83",
   "earpop-capture-linux-arm64": "79b17457fd0ea1caec84ed73c43055731a92b76f72d916168be778977ef36ce7"
 }
