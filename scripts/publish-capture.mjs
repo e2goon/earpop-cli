@@ -2,6 +2,7 @@
 /**
  * Publish platform capture packages, then earpop-cli.
  * Expects binaries already staged under npm/<package>/bin/.
+ * Preferred path: GitHub Actions on tag v* (.github/workflows/capture.yml).
  *
  * Dry-run (this host only): node scripts/publish-capture.mjs
  * Dry-run (all platforms):   node scripts/publish-capture.mjs --all
@@ -9,6 +10,7 @@
  *
  * On publish: writes SHA-256 map, syncs versions, runs tsup, publishes,
  * then restores root optionalDependencies to workspace:*.
+ * Under GITHUB_ACTIONS, adds npm --provenance.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -121,13 +123,18 @@ function run(command, args, cwd = ROOT) {
 
 run("pnpm", ["exec", "tsup"]);
 
+const npmPublishArgs = ["publish", "--access", "public"];
+if (process.env.GITHUB_ACTIONS === "true") {
+  npmPublishArgs.push("--provenance");
+}
+
 try {
   for (const p of platforms) {
     console.log(`Publishing ${p.package}@${version}...`);
-    run("npm", ["publish", "--access", "public"], join(ROOT, "npm", p.package));
+    run("npm", npmPublishArgs, join(ROOT, "npm", p.package));
   }
   console.log(`Publishing earpop-cli@${version}...`);
-  run("npm", ["publish", "--access", "public"], ROOT);
+  run("npm", npmPublishArgs, ROOT);
 } finally {
   restoreOptional(rootPkg, savedOptional);
   console.log("Restored root optionalDependencies to workspace:* (or previous values).");

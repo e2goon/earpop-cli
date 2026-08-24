@@ -87,4 +87,14 @@ pnpm fmt:check
 pnpm build
 ```
 
-Capture sidecar (optional): `pnpm capture:build`. Release packaging is documented in [ARCHITECTURE.md](./ARCHITECTURE.md) (GitHub Actions + `publish-capture.mjs`).
+Capture sidecar (optional): `pnpm capture:build`. Release packaging is documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+## Release (npm + GitHub)
+
+1. Bump `"version"` in root `package.json` (platform package versions are synced on publish).
+2. Commit on the branch you intend to tag (usually `main`).
+3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (tag must match `package.json`, including the `v` prefix only on the tag).
+4. Ensure repo secret **`NPM_TOKEN`** is set (npm automation token with publish rights).
+5. Actions (`.github/workflows/capture.yml`) builds all capture binaries, publishes `earpop-capture-*` then `earpop-cli`, creates/updates the GitHub Release, and commits integrity hashes to the default branch.
+
+Manual publish (`node scripts/publish-capture.mjs --publish`) is for debugging only when CI cannot run.
