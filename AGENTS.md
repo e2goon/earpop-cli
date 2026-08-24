@@ -31,6 +31,7 @@ Do not duplicate those docs here — follow the link for the topic.
 - `pnpm capture:build` — Node: `cargo build --release` + stage into `npm/earpop-capture-<platform>/bin/` (PowerShell / cmd OK)
 - `pnpm capture:stage` — stage an already-built binary for this host
 - `pnpm capture:publish:check` — dry-run staged binaries (`--all`; local `--publish` only if CI cannot)
+- `pnpm release` — bump version, commit, tag `v*`, push (CI publishes); `--dry-run` / `--no-push`
 - `pnpm dev` — tsx; prefers `target/release`, then optional/workspace capture package
 - `pnpm build` / `prepublishOnly` — **tsup** → `dist/` (capture binaries are separate platform packages)
 - Capture release: tag `v*` matching `package.json` version → Actions builds matrix, publishes with `NPM_TOKEN`, opens/updates GitHub Release, commits integrity to default branch. `workflow_dispatch` builds only.
@@ -56,7 +57,7 @@ crates/
 npm/
   earpop-capture-*/  # one binary per os/cpu (staged by build/CI; published separately)
 
-scripts/        # build-capture / stage-capture / publish-capture (Node, no bash/Docker)
+scripts/        # build-capture / stage-capture / publish-capture / release (Node)
 
 docs/           # CONVENTIONS, CONTRIBUTING, ARCHITECTURE
 

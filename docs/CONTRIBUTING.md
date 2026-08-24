@@ -91,10 +91,17 @@ Capture sidecar (optional): `pnpm capture:build`. Release packaging is documente
 
 ## Release (npm + GitHub)
 
-1. Bump `"version"` in root `package.json` (platform package versions are synced on publish).
-2. Commit on the branch you intend to tag (usually `main`).
-3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z` (tag must match `package.json`, including the `v` prefix only on the tag).
-4. Ensure repo secret **`NPM_TOKEN`** is set (npm automation token with publish rights).
-5. Actions (`.github/workflows/capture.yml`) builds all capture binaries, publishes `earpop-capture-*` then `earpop-cli`, creates/updates the GitHub Release, and commits integrity hashes to the default branch.
+On a clean tree (usually `main`), after `NPM_TOKEN` is set in repo secrets:
+
+```bash
+pnpm release          # patch (0.2.0 → 0.2.1)
+pnpm release minor    # 0.2.0 → 0.3.0
+pnpm release major    # 0.2.0 → 1.0.0
+pnpm release 0.3.0    # exact version
+pnpm release --dry-run
+pnpm release --no-push   # commit + tag only
+```
+
+`pnpm release` bumps root + `npm/earpop-capture-*/package.json`, commits `chore: x.y.z`, tags `vx.y.z`, and pushes commit + tag. Actions then builds, publishes, and opens the GitHub Release.
 
 Manual publish (`node scripts/publish-capture.mjs --publish`) is for debugging only when CI cannot run.
