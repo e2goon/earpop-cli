@@ -1,6 +1,6 @@
 import { Spinner } from "@inkjs/ui";
 import { Text, useInput, useStdout, Box } from "ink";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { shortPath } from "#/lib/clipboard.js";
@@ -124,8 +124,25 @@ function formatFocusLabel(focusedSpeakers: ReadonlySet<string>) {
   return [...focusedSpeakers].sort((a, b) => Number(a) - Number(b));
 }
 
+function heardSpeakerIds(tokens: Token[]) {
+  const heard = new Set<string>();
+  for (const token of tokens) {
+    if (token.speaker !== undefined) heard.add(token.speaker);
+  }
+  return [...heard].sort((a, b) => Number(a) - Number(b));
+}
+
 function hasCaptionText(segments: Segment[]) {
   return segments.some((segment) => segment.color === undefined && segment.text.length > 0);
+}
+
+function SpeakerIdList(props: { ids: string[] }) {
+  return props.ids.map((id, index) => (
+    <Text key={id}>
+      {index > 0 ? <Text dimColor>, </Text> : null}
+      <Text color={speakerColor(id)}>{`S${id}`}</Text>
+    </Text>
+  ));
 }
 
 function buildSegments({
@@ -253,12 +270,7 @@ function StatusLine(props: {
         {props.focusedSpeakers !== undefined && props.focusedSpeakers.length > 0 && (
           <Text dimColor>
             {" · focus: "}
-            {props.focusedSpeakers.map((id, index) => (
-              <Text key={id}>
-                {index > 0 ? <Text dimColor>, </Text> : null}
-                <Text color={speakerColor(id)}>{`S${id}`}</Text>
-              </Text>
-            ))}
+            <SpeakerIdList ids={props.focusedSpeakers} />
           </Text>
         )}
       </Box>
@@ -303,11 +315,6 @@ export function CaptionScreen(props: CaptionScreenProps) {
   const overlayOpen = props.overlay.kind !== "none";
   // Empty set = show all speakers; 1–9 toggles membership, 0 clears.
   const [focusedSpeakers, setFocusedSpeakers] = useState(() => new Set<string>());
-  const heardSpeakersRef = useRef(new Set<string>());
-
-  for (const token of [...props.finalTokens, ...props.pendingTokens]) {
-    if (token.speaker !== undefined) heardSpeakersRef.current.add(token.speaker);
-  }
 
   useInput((input, key) => {
     if (overlayOpen) return;
@@ -353,7 +360,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
   const focusedSpeakerIds = formatFocusLabel(focusedSpeakers);
   const focusEmpty =
     focusedSpeakers.size > 0 && !hasCaptionText(segments) && !props.ended;
-  const heardIds = [...heardSpeakersRef.current].sort((a, b) => Number(a) - Number(b));
+  const heardIds = heardSpeakerIds([...props.finalTokens, ...props.pendingTokens]);
   const liveHints =
     props.state === "paused"
       ? "p resume · 1-9 speaker · 0 all · m mic · s settings · ESC end"
@@ -400,22 +407,11 @@ export function CaptionScreen(props: CaptionScreenProps) {
         <Box flexDirection="column" height={CAPTION_LINE_COUNT}>
           {focusEmpty ? (
             <Text dimColor>
-              No speech from{" "}
-              {(focusedSpeakerIds ?? []).map((id, index) => (
-                <Text key={id}>
-                  {index > 0 ? <Text dimColor>, </Text> : null}
-                  <Text color={speakerColor(id)}>{`S${id}`}</Text>
-                </Text>
-              ))}
+              No speech from <SpeakerIdList ids={focusedSpeakerIds ?? []} />
               {heardIds.length > 0 ? (
                 <>
                   {" · heard "}
-                  {heardIds.map((id, index) => (
-                    <Text key={id}>
-                      {index > 0 ? <Text dimColor>, </Text> : null}
-                      <Text color={speakerColor(id)}>{`S${id}`}</Text>
-                    </Text>
-                  ))}
+                  <SpeakerIdList ids={heardIds} />
                 </>
               ) : null}
               {" · 0 show all"}

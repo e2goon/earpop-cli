@@ -7,6 +7,10 @@ function isRegion(value: string | undefined): value is SttRegion {
   return value === "us" || value === "eu" || value === "jp";
 }
 
+export function regionLabel(value: SttRegion) {
+  return value === "us" ? "United States" : value === "eu" ? "Europe" : "Japan (Tokyo)";
+}
+
 export async function resolveRegion() {
   const raw = process.env.SONIOX_REGION ?? (await loadSettings()).region;
   return isRegion(raw) ? raw : DEFAULT_REGION;

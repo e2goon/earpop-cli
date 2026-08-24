@@ -9,15 +9,11 @@ import {
   type SttLanguage,
 } from "#/lib/languages.js";
 import { listMicrophones } from "#/lib/microphones.js";
-import { resolveRegion } from "#/lib/region.js";
+import { regionLabel, resolveRegion } from "#/lib/region.js";
 import { loadSettings, saveSettings } from "#/lib/settings.js";
 import type { Microphone, SttRegion } from "#/lib/types.js";
 import { quit } from "#/app/runtime.js";
 import { SettingsScreen } from "#/screens/settings.js";
-
-function regionLabel(value: SttRegion) {
-  return value === "us" ? "United States" : value === "eu" ? "Europe" : "Japan (Tokyo)";
-}
 
 export function SettingsApp() {
   const [microphones, setMicrophones] = useState<Microphone[]>([]);
