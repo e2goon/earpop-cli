@@ -103,9 +103,17 @@ for (const p of platforms) {
   const pkgPath = join(ROOT, "npm", p.package, "package.json");
   const pkg = readJson(pkgPath);
   pkg.version = version;
+  pkg.repository = {
+    type: "git",
+    url: "https://github.com/e2goon/earpop-cli.git",
+  };
   writeJson(pkgPath, pkg);
 }
 
+rootPkg.repository = {
+  type: "git",
+  url: "https://github.com/e2goon/earpop-cli.git",
+};
 const exactOptional = {};
 for (const p of platforms) {
   exactOptional[p.package] = version;

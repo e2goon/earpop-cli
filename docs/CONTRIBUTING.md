@@ -2,7 +2,7 @@
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Code style: [CONVENTIONS.md](./CONVENTIONS.md).
 
-**Remote:** GitHub `origin` (`https://github.com/e2goon/earpop-cli.git`). Do not invent a `repository` field in `package.json` unless needed for publish metadata.
+**Remote:** GitHub `origin` (`https://github.com/e2goon/earpop-cli.git`). Root and `npm/earpop-capture-*` `package.json` set `repository.url` for npm provenance on tag publish.
 
 ## Commits
 

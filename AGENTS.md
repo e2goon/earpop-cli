@@ -17,7 +17,7 @@ Agent workflow for this repo. Details live in linked docs — do not duplicate t
 - Do **not** publish, commit, or push unless asked. Strip `Co-authored-by: Cursor` if a hook inserts it.
 - Do **not** commit `.cursor/`. Shared guidance is this file + `docs/`.
 - Public package surface (code, UI, README): **English**.
-- Remote: GitHub `origin`. Release: `pnpm release` (see CONTRIBUTING). Prefer `gh` for PRs when asked.
+- Root / capture `package.json` keep `repository.url` for npm provenance (tag publish).
 
 ## Notes agents miss from the tree
 
