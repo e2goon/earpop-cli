@@ -1,136 +1,34 @@
 # Architecture
 
-Why this CLI is structured the way it is.
-
-| Doc                                  | Role                                          |
-| ------------------------------------ | --------------------------------------------- |
-| [README.md](../README.md)            | Users and npm: install, usage, env, storage   |
-| [AGENTS.md](../AGENTS.md)            | Agent workflow and tooling                    |
-| [CONVENTIONS.md](./CONVENTIONS.md)   | Code style                                    |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Commits and pull requests                     |
-| **This file**                        | Design intent, layers, latency, stack choices |
-
-**Goal:** minimize time from speech to text on screen. Split **hot** and **cold** paths; keep React as a renderer only.
+**Goal:** minimize speech → on-screen text. Split **hot** and **cold**; React is a renderer only.
 
 ## Layers
 
 ```text
-        ┌──────────────────────────────────────────────────────────────┐
-        │  UI (ink + React) — screens/ + components/                   │
-        │  caption: status + 4 caption lines + footer (+ overlays)     │
-        │  key-setup / settings / microphone-select                    │
-        └──────────────▲───────────────────────────────────────────────┘
-                       │ one snapshot → setState per WS message
-        ┌──────────────┴───────────────────────────────────────────────┐
-        │  lib/transcription.ts (outside React)                        │
-        │  session SM, reconnect backoff, caption tail, device switch  │
-        └───▲──────────────▲──────────────────┬───────────────────────┘
-            │ frames       │ tokens/state     │ final tokens
-     ┌──────┴────────┐ ┌───┴───────┐ ┌────────▼─────┐ ┌────────────────┐
-     │ lib/audio.ts  │ │lib/soniox │ │lib/journal.ts│ │ api-key /      │
-     │ earpop-capture│ │ ws        │ │ JSONL append │ │ settings       │
-     └──────▲────────┘ └────▲──────┘ └───────▲──────┘ └───────▲────────┘
-         mic            Soniox          transcripts/      keychain, etc.
+UI (ink)  ←── one snapshot / setState per WS message ──  transcription (outside React)
+                                                         ├── audio (earpop-capture)
+                                                         ├── soniox (ws)
+                                                         ├── journal (JSONL)
+                                                         └── api-key / settings
 ```
 
-Principles:
+- **Hot:** mic → socket → tokens → UI — no blocking.
+- **Cold:** journal, keepalive, settings — never stall hot.
+- **Journal** owns full finals; UI keeps a short tail (flat render cost).
+- Same controller modules power headless `transcripts` commands.
 
-- **Hot path:** mic → socket → tokens → UI — no blocking waits.
-- **Cold path:** journal, keepalive, settings — never stall the hot path.
-- **React draws only.** Audio/WS/files live in the controller; same modules work without UI (`transcripts` commands).
-- **Single source of history:** journal owns full finals; UI holds a short **tail** so render cost stays flat.
+## Intentional STT / capture choices
 
-## Capture packaging
-
-```text
-earpop-cli (JS, dist/)
-  optionalDependencies → earpop-capture-<os>-<cpu>  (one binary each)
-
-Repo:
-  src/lib/capture-platforms.json   # os/cpu/package/bin/rustTarget (source of truth)
-  src/lib/capture-integrity.json   # SHA-256 per package (filled on publish)
-  npm/earpop-capture-*/            # platform package shells + staged bin/
-  crates/earpop-capture/           # Rust sidecar source
-  .github/workflows/capture.yml    # GitHub Actions native matrix (keep aligned with platforms JSON)
-```
-
-Resolve order (`capture-bin.ts`): `EARPOP_CAPTURE_BIN` → `target/release` → optional npm package → workspace `npm/*/bin`.
-Published optional packages are SHA-256 checked when the integrity map is non-empty.
-Sidecar processes get a **minimal env** (no API keys); see `capture-process.ts`.
-
-Local: `pnpm capture:build` (host only). Release: `pnpm release` → tag `v*` → Actions matrix → CI `publish-capture.mjs --publish` (`NPM_TOKEN`) → GitHub Release → integrity commit on default branch. `workflow_dispatch` builds only.
-
-## Latency budget
-
-| Stage              | Latency    | Choice                                              |
-| ------------------ | ---------- | --------------------------------------------------- |
-| Mic → capture out  | ~100ms     | cpal+rubato sidecar; 3200-byte (100ms) s16le frames |
-| Frame → socket     | ~0         | send as soon as a frame fills; no batching          |
-| Socket             | tens of ms | `perMessageDeflate: false`                          |
-| Soniox provisional | 200–400ms  | server-side                                         |
-| Token → UI         | immediate  | token events paint without coalesce                 |
-
-Provisional captions are the priority; finals may arrive later.
-Endpoint detection stays off so early finalization does not trade away word/diarization accuracy.
-Korean-primary bias: `language_hints: ["ko","en"]` + `language_hints_strict`, plus `context.general`
-and a rolling final-text tail on reconnect (same idea as desktop).
-Mic path matches desktop quality: **cpal + rubato FFT** resample to 16 kHz (not ffmpeg).
-
-## Data flow
-
-```text
-[hot]
-earpop-capture stdout ──3200B──▶ transcription ──sendAudio──▶ ws
-ws ──token JSON──▶ transcription ──snapshot──▶ caption (1× setState)
-
-[cold]
-transcription ──finals──▶ journal append
-soniox ──keepalive every 10s──▶ ws
-transcription ──errors──▶ reconnect backoff (1s→30s; reset after 30s stable)
-transcription ──device change──▶ restart capture only (session kept) + journal session line + settings
-```
-
-Controller rules:
-
-- If `bufferedAmount` > ~5s of audio (160KB), drop frames (stale audio).
-- During reconnect, keep capture up and drop frames (cheaper than restarting the mic).
+- Provisional captions first; finals may lag. Endpoint detection **off** (accuracy over early finalize).
+- `language_hints: ["ko","en"]` + strict hints; rolling final-text context on reconnect.
+- Mic: cpal + rubato → 16 kHz mono; ~100ms (3200-byte) s16le frames; no ffmpeg.
+- WS: `perMessageDeflate: false`; drop frames if `bufferedAmount` ≳ 5s audio; on reconnect keep capture, drop frames.
 - One WS message → one snapshot → one UI update.
 
-## Live session lifecycle
+## Capture packaging (why)
 
-```text
-earpop
-  → resolve API key (else key-setup)
-  → resolve mic (else microphone-select)
-  → open journal → start capture + session → caption
-        m: mic overlay → restart capture only + session line + save settings
-        p: pause/resume (stop capture+session; elapsed excludes pause)
-  ESC → stop capture → session stop (empty frame → finished, 3s grace)
-        → show transcript path (clipboard) and wait
-  ESC again → unmount → print transcript path → exit 0
-  Ctrl+C follows the same two-step exit
-```
+Platform binaries ship as `optionalDependencies` (`earpop-capture-*`). Source of truth: `src/lib/capture-platforms.json` (keep Actions matrix aligned). Resolve / integrity / minimal spawn env: `capture-bin.ts`, `capture-integrity.json`, `capture-process.ts`. Release path: `pnpm release` → CI (`capture.yml`).
 
-One meeting = one process = one JSONL file. No daemon. Agents consume finished files via `earpop transcripts list|view|export`.
+## Product shape
 
-## Persistence (design)
-
-Storage locations for users are documented in the README. Architecturally:
-
-- Transcript JSONL shares the desktop app folder on macOS (`com.earpop.app`) so tools can read the same files.
-- API keys are **per region** (`us` / `eu` / `jp`); env `SONIOX_API_KEY` / `SONIOX_REGION` override stored values.
-- CLI settings use `cli-settings.json` in the same support directory (name chosen not to clash with the desktop app).
-
-## Stack choices (locked)
-
-| Role     | Choice                                                                                |
-| -------- | ------------------------------------------------------------------------------------- |
-| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7                             |
-| Package  | pnpm workspace; root `dist/` + `optionalDependencies` platform capture packages       |
-| UI       | ink 7 + @inkjs/ui, React 19                                                           |
-| WS       | `ws` (deflate off, `bufferedAmount`, binary control)                                  |
-| Mic      | Rust `earpop-capture` (cpal + rubato); CI-native builds; SHA-256 integrity on publish |
-| CLI args | raw `process.argv` (few commands)                                                     |
-| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only                    |
-
-Runtime deps: ink, @inkjs/ui, react, ws.
+One meeting = one process = one JSONL. No daemon. macOS transcript/key paths share the desktop app support dir (`com.earpop.app`) so tools can read the same files; CLI settings file is `cli-settings.json` to avoid clashing with the desktop app.
