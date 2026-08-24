@@ -2,7 +2,7 @@
 
 Git and review conventions for this repository. Follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Code style: [CONVENTIONS.md](./CONVENTIONS.md). Agent boundaries: [AGENTS.md](../AGENTS.md).
 
-**Remote:** primary hosting for CI and public collaboration is **GitHub** (`github` remote). Cursor Origin may still exist as a secondary remote; do not invent a `repository` URL in `package.json` unless publishing metadata needs it.
+**Remote:** **GitHub** as `origin` (`https://github.com/e2goon/earpop-cli.git`). Do not invent a `repository` URL in `package.json` unless publishing metadata needs it.
 
 ## Commits
 
