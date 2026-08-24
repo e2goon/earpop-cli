@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Build earpop-capture for this host and stage into npm/<package>/bin/.
- * Cross-platform release binaries are produced by Depot CI (.depot/workflows/capture.yml).
+ * Cross-platform release binaries are produced by GitHub Actions (.github/workflows/capture.yml).
  */
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";

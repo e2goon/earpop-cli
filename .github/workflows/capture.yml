@@ -1,6 +1,5 @@
-# Depot CI workflow for Cursor Origin (not GitHub Actions).
-# Connect Depot from the Origin repo Apps tab, then push to origin.cursor.com.
 # Keep matrix package / rust_target / bin aligned with src/lib/capture-platforms.json
+# Runs on GitHub Actions (push tags v* or workflow_dispatch).
 name: Capture binaries
 
 on:

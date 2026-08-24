@@ -2,7 +2,7 @@
 
 Git and review conventions for this repository. Follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Code style: [CONVENTIONS.md](./CONVENTIONS.md). Agent boundaries: [AGENTS.md](../AGENTS.md).
 
-**Remote:** this project is hosted on **Cursor Origin** only (`origin.cursor.com`). Do **not** use GitHub (`gh`, GitHub Issues/PRs, or a fabricated `repository` URL in `package.json`).
+**Remote:** primary hosting for CI and public collaboration is **GitHub** (`github` remote). Cursor Origin may still exist as a secondary remote; do not invent a `repository` URL in `package.json` unless publishing metadata needs it.
 
 ## Commits
 
@@ -52,7 +52,7 @@ Do **not** commit unless the maintainer (or user, for agents) asked.
 
 ## Pull requests (Cursor Origin)
 
-Open and merge PRs on **Cursor Origin** (UI or Cursor tooling). **Never** use the GitHub CLI (`gh pr …`).
+Open and merge PRs on **GitHub** (`gh pr` is fine when the human asks).
 
 **Title:** same as a commit subject — English `type` + Korean description. Prefer **squash merge**; the PR title becomes the history entry.
 
@@ -87,4 +87,4 @@ pnpm fmt:check
 pnpm build
 ```
 
-Capture sidecar (optional): `pnpm capture:build`. Release packaging is documented in [ARCHITECTURE.md](./ARCHITECTURE.md) (Depot CI on Origin + `publish-capture.mjs`).
+Capture sidecar (optional): `pnpm capture:build`. Release packaging is documented in [ARCHITECTURE.md](./ARCHITECTURE.md) (GitHub Actions + `publish-capture.mjs`).
