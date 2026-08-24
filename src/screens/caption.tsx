@@ -3,7 +3,23 @@ import { Text, useInput, useStdout, Box } from "ink";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { shortPath } from "#/lib/clipboard.js";
-import type { Microphone, SttState, Token } from "#/lib/types.js";
+import type { SttLanguage } from "#/lib/languages.js";
+import type { Microphone, SttRegion, SttState, Token } from "#/lib/types.js";
+import { SettingsScreen } from "#/screens/settings.js";
+
+export type CaptionOverlay =
+  | { kind: "none" }
+  | { kind: "mic"; microphones: Microphone[]; loading: boolean; error?: string }
+  | {
+      kind: "settings";
+      microphones: Microphone[];
+      microphonesLoading: boolean;
+      currentMicrophone?: string;
+      region?: SttRegion;
+      languages: SttLanguage[];
+      hasApiKey: boolean;
+      notice?: string;
+    };
 
 export interface CaptionScreenProps {
   state: SttState;
@@ -12,19 +28,21 @@ export interface CaptionScreenProps {
   finalTokens: Token[];
   pendingTokens: Token[];
   elapsedSeconds: number;
-  microphoneOverlay: {
-    open: boolean;
-    microphones: Microphone[];
-    loading: boolean;
-    error?: string;
-  };
+  overlay: CaptionOverlay;
   journalPath?: string;
   ended?: boolean;
   onTogglePause: () => void;
   onQuit: () => void;
   onOpenMicrophones: () => void;
+  onOpenSettings: () => void;
   onPickMicrophone: (name: string) => void;
   onCloseMicrophones: () => void;
+  onCloseSettings: () => void;
+  onSettingsPickMicrophone: (name: string) => void;
+  onSettingsPickLanguages: (codes: SttLanguage[]) => void;
+  onSettingsPickRegion: (region: SttRegion) => void;
+  onSettingsChangeApiKey: (key: string) => void;
+  onSettingsDeleteApiKey: () => void;
 }
 
 const CAPTION_LINE_COUNT = 4;
@@ -200,9 +218,10 @@ function StatusLabel(props: { state: SttState; stateMessage?: string }) {
 export function CaptionScreen(props: CaptionScreenProps) {
   const { stdout } = useStdout();
   const columns = stdout.columns ?? FALLBACK_COLUMNS;
+  const overlayOpen = props.overlay.kind !== "none";
 
   useInput((input, key) => {
-    if (props.microphoneOverlay.open) return;
+    if (overlayOpen) return;
 
     if (props.ended) {
       if (key.escape) props.onQuit();
@@ -218,6 +237,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
       return;
     }
     if (input === "m") props.onOpenMicrophones();
+    if (input === "s") props.onOpenSettings();
   });
 
   const segments = buildSegments({
@@ -237,14 +257,31 @@ export function CaptionScreen(props: CaptionScreenProps) {
 
       {showPath && <Text color="yellow">{shortPath(props.journalPath!)} copied to clipboard</Text>}
 
-      {props.microphoneOverlay.open ? (
+      {props.overlay.kind === "mic" ? (
         <MicrophoneSelect
-          microphones={props.microphoneOverlay.microphones}
+          microphones={props.overlay.microphones}
           current={props.device}
-          loading={props.microphoneOverlay.loading}
-          error={props.microphoneOverlay.error}
+          loading={props.overlay.loading}
+          error={props.overlay.error}
           onPick={props.onPickMicrophone}
           onCancel={props.onCloseMicrophones}
+        />
+      ) : props.overlay.kind === "settings" ? (
+        <SettingsScreen
+          microphones={props.overlay.microphones}
+          microphonesLoading={props.overlay.microphonesLoading}
+          currentMicrophone={props.overlay.currentMicrophone}
+          region={props.overlay.region}
+          languages={props.overlay.languages}
+          hasApiKey={props.overlay.hasApiKey}
+          notice={props.overlay.notice}
+          exitLabel="ESC back"
+          onPickMicrophone={props.onSettingsPickMicrophone}
+          onPickLanguages={props.onSettingsPickLanguages}
+          onPickRegion={props.onSettingsPickRegion}
+          onChangeApiKey={props.onSettingsChangeApiKey}
+          onDeleteApiKey={props.onSettingsDeleteApiKey}
+          onExit={props.onCloseSettings}
         />
       ) : (
         <Box flexDirection="column" height={CAPTION_LINE_COUNT}>
@@ -260,15 +297,17 @@ export function CaptionScreen(props: CaptionScreenProps) {
         </Box>
       )}
 
-      <Box width="100%">
-        <Text dimColor>
-          {props.ended
-            ? "ESC quit"
-            : props.state === "paused"
-              ? "p resume · m mic · ESC end"
-              : "p pause · m mic · ESC end"}
-        </Text>
-      </Box>
+      {!overlayOpen && (
+        <Box width="100%">
+          <Text dimColor>
+            {props.ended
+              ? "ESC quit"
+              : props.state === "paused"
+                ? "p resume · m mic · s settings · ESC end"
+                : "p pause · m mic · s settings · ESC end"}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

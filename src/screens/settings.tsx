@@ -15,6 +15,8 @@ export interface SettingsScreenProps {
   languages: SttLanguage[];
   hasApiKey: boolean;
   notice?: string;
+  /** Footer hint for ESC on the menu. Default: "ESC exit". */
+  exitLabel?: string;
   onPickMicrophone: (name: string) => void;
   onPickRegion?: (region: SttRegion) => void;
   onPickLanguages: (codes: SttLanguage[]) => void;
@@ -60,7 +62,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
               else setView(item);
             }}
           />
-          <Text dimColor>ESC exit</Text>
+          <Text dimColor>{props.exitLabel ?? "ESC exit"}</Text>
         </>
       )}
 

@@ -1,5 +1,5 @@
 import { startCapture } from "#/lib/audio.js";
-import type { SttLanguage } from "#/lib/languages.js";
+import { languageHintLabel, normalizeLanguageHints, type SttLanguage } from "#/lib/languages.js";
 import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
@@ -39,6 +39,7 @@ export interface TranscriptionController {
   start(): Promise<void>;
   togglePause(): Promise<void>;
   switchMicrophone(name: string): Promise<void>;
+  setLanguageHints(codes: SttLanguage[]): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -48,11 +49,12 @@ export function createTranscription({
   device: deviceOption,
   clientReferenceId,
   region,
-  languageHints,
+  languageHints: languageHintsOption,
   onSnapshot,
   onFatal,
 }: TranscriptionOptions) {
   let device = deviceOption ?? "default";
+  let languageHints = normalizeLanguageHints(languageHintsOption);
   let capture: AudioCapture | null = null;
   let session: SttSession | null = null;
 
@@ -63,7 +65,7 @@ export function createTranscription({
   let pausedAtMs = 0;
   let pausedTotalMs = 0;
 
-  // Serialize togglePause/switchMicrophone/stop — overlapping ops can open capture atop teardown.
+  // Serialize togglePause/switchMicrophone/setLanguageHints/stop — overlapping ops can open capture atop teardown.
   let opChain: Promise<void> = Promise.resolve();
   function enqueue(op: () => Promise<void>) {
     const run = opChain.then(op, op);
@@ -348,6 +350,37 @@ export function createTranscription({
           }
         }
         emit(true);
+      });
+    },
+
+    setLanguageHints(codes: SttLanguage[]) {
+      return enqueue(async () => {
+        if (stopped) return;
+        const next = normalizeLanguageHints(codes);
+        if (next.join(",") === languageHints.join(",")) return;
+
+        languageHints = next;
+        await saveSettings({ languages: next });
+        stateMessage = `Languages set to ${languageHintLabel(next)}`;
+
+        if (paused) {
+          emit(true);
+          return;
+        }
+
+        if (reconnectTimer !== null) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        connecting = false;
+        try {
+          await session?.stop();
+        } catch {
+          // Soft reconnect: drop the old socket even if stop fails.
+        }
+        session = null;
+        emit(true);
+        await connect();
       });
     },
 
