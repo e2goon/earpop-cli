@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { useInterrupt } from "#/hooks/use-interrupt.js";
 import { deleteApiKey, loadApiKey, saveApiKey } from "#/lib/api-key.js";
+import {
+  DEFAULT_LANGUAGE_HINTS,
+  languageHintLabel,
+  normalizeLanguageHints,
+  type SttLanguage,
+} from "#/lib/languages.js";
 import { listMicrophones } from "#/lib/microphones.js";
 import { resolveRegion } from "#/lib/region.js";
 import { loadSettings, saveSettings } from "#/lib/settings.js";
@@ -17,6 +23,7 @@ export function SettingsApp() {
   const [microphones, setMicrophones] = useState<Microphone[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentMicrophone, setCurrentMicrophone] = useState<string | undefined>();
+  const [languages, setLanguages] = useState<SttLanguage[]>([...DEFAULT_LANGUAGE_HINTS]);
   const [region, setRegion] = useState<SttRegion | undefined>();
   const [hasApiKey, setHasApiKey] = useState(false);
   const [notice, setNotice] = useState<string | undefined>();
@@ -34,6 +41,7 @@ export function SettingsApp() {
         listMicrophones().catch(() => [] as Microphone[]),
       ]);
       setCurrentMicrophone(settings.microphone);
+      setLanguages(normalizeLanguageHints(settings.languages));
       setRegion(resolved);
       setHasApiKey(key !== null);
       setMicrophones(found);
@@ -46,6 +54,7 @@ export function SettingsApp() {
       microphones={microphones}
       microphonesLoading={loading}
       currentMicrophone={currentMicrophone}
+      languages={languages}
       region={region}
       hasApiKey={hasApiKey}
       notice={notice}
@@ -53,6 +62,12 @@ export function SettingsApp() {
         void saveSettings({ microphone: name }).then(() => {
           setCurrentMicrophone(name);
           setNotice(`Microphone set to ${name}`);
+        });
+      }}
+      onPickLanguages={(codes) => {
+        void saveSettings({ languages: codes }).then(() => {
+          setLanguages(codes);
+          setNotice(`Languages set to ${languageHintLabel(codes)}`);
         });
       }}
       onPickRegion={(next) => {

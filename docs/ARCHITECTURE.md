@@ -20,7 +20,7 @@ UI (ink)  ←── one snapshot / setState per WS message ──  transcription
 ## Intentional STT / capture choices
 
 - Provisional captions first; finals may lag. Endpoint detection **off** (accuracy over early finalize).
-- `language_hints: ["ko","en"]` + strict hints; rolling final-text context on reconnect.
+- Language hints from settings (default `["en"]`); strict when a single language is selected; rolling final-text context on reconnect.
 - Mic: cpal + rubato → 16 kHz mono; ~100ms (3200-byte) s16le frames; no ffmpeg.
 - WS: `perMessageDeflate: false`; drop frames if `bufferedAmount` ≳ 5s audio; on reconnect keep capture, drop frames.
 - One WS message → one snapshot → one UI update.

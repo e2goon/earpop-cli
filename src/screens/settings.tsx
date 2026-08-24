@@ -2,7 +2,9 @@ import { PasswordInput, Select } from "@inkjs/ui";
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 
+import { LanguageSelect } from "#/components/language-select.js";
 import { MicrophoneSelect } from "#/components/microphone-select.js";
+import { languageHintLabel, type SttLanguage } from "#/lib/languages.js";
 import type { Microphone, SttRegion } from "#/lib/types.js";
 
 export interface SettingsScreenProps {
@@ -10,16 +12,18 @@ export interface SettingsScreenProps {
   microphonesLoading: boolean;
   currentMicrophone?: string;
   region?: SttRegion;
+  languages: SttLanguage[];
   hasApiKey: boolean;
   notice?: string;
   onPickMicrophone: (name: string) => void;
   onPickRegion?: (region: SttRegion) => void;
+  onPickLanguages: (codes: SttLanguage[]) => void;
   onChangeApiKey: (key: string) => void;
   onDeleteApiKey: () => void;
   onExit: () => void;
 }
 
-type MenuItem = "microphone" | "region" | "api-key" | "api-key-delete" | "exit";
+type MenuItem = "microphone" | "region" | "languages" | "api-key" | "api-key-delete" | "exit";
 type View = "menu" | Exclude<MenuItem, "exit"> | "api-key-delete-confirm";
 
 export function SettingsScreen(props: SettingsScreenProps) {
@@ -32,7 +36,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
 
   useInput((_input, key) => {
     if (!key.escape) return;
-    if (view === "microphone") return;
+    if (view === "microphone" || view === "languages") return;
     if (view !== "menu") setView("menu");
     else props.onExit();
   });
@@ -46,6 +50,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
       {view === "menu" && (
         <>
           {!props.hasApiKey && <Text dimColor>No saved key</Text>}
+          <Text dimColor>Languages: {languageHintLabel(props.languages)}</Text>
           <Select
             options={options}
             onChange={(value) => {
@@ -66,6 +71,17 @@ export function SettingsScreen(props: SettingsScreenProps) {
           loading={props.microphonesLoading}
           onPick={(name) => {
             props.onPickMicrophone(name);
+            setView("menu");
+          }}
+          onCancel={() => setView("menu")}
+        />
+      )}
+
+      {view === "languages" && (
+        <LanguageSelect
+          current={props.languages}
+          onPick={(codes) => {
+            props.onPickLanguages(codes);
             setView("menu");
           }}
           onCancel={() => setView("menu")}
@@ -126,6 +142,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
 function buildMenuOptions({ hasApiKey, hasRegion }: { hasApiKey: boolean; hasRegion: boolean }) {
   const menuOptions: Array<{ label: string; value: MenuItem }> = [
     { label: "Choose microphone", value: "microphone" },
+    { label: "Choose languages", value: "languages" },
     ...(hasRegion ? [{ label: "Choose region", value: "region" as MenuItem }] : []),
     { label: "Change API key", value: "api-key" },
   ];

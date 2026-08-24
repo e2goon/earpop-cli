@@ -13,7 +13,7 @@ const HELP = [
   "",
   "Usage:",
   "  earpop                       Start live transcription",
-  "  earpop settings              Settings (microphone, API key)",
+  "  earpop settings              Settings (microphone, languages, API key)",
   "  earpop transcripts list      List transcripts",
   "  earpop transcripts view <id>   Print transcript as txt to stdout",
   "  earpop transcripts export <id> Save transcript as a txt file",

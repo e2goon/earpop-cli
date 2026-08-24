@@ -1,5 +1,10 @@
 import WebSocket from "ws";
 
+import {
+  languageGeneralContext,
+  normalizeLanguageHints,
+  type SttLanguage,
+} from "#/lib/languages.js";
 import { DEFAULT_REGION } from "#/lib/region.js";
 import type { SttEvent, SttOptions, SttRegion, SttSession, Token } from "#/lib/types";
 
@@ -15,19 +20,6 @@ const KEEPALIVE_INTERVAL_MS = 10_000;
 // ~5s of 16 kHz mono s16le; drop audio when backlog exceeds this.
 const BACKLOG_LIMIT_BYTES = 160 * 1024;
 
-// ~90% Korean / ~10% English mix: ko first, strict bias, still allow en code-switch.
-const LANGUAGE_HINTS = ["ko", "en"] as const;
-
-const LANGUAGE_GENERAL_CONTEXT = [
-  { key: "language", value: "Korean" },
-  {
-    key: "instructions",
-    value:
-      "Speech is primarily Korean with occasional English words or short phrases. Prefer Hangul for Korean. Keep English words and loanwords in Latin script.",
-  },
-  { key: "setting", value: "Casual live conversation transcription" },
-] as const;
-
 export function appendSttContext({ text, tokens }: { text: string; tokens: Token[] }) {
   let next = text;
   for (const token of tokens) {
@@ -40,14 +32,17 @@ export function appendSttContext({ text, tokens }: { text: string; tokens: Token
   return next;
 }
 
-function buildSessionContext(contextText: string | undefined) {
-  const context: { general: typeof LANGUAGE_GENERAL_CONTEXT; text?: string } = {
-    general: LANGUAGE_GENERAL_CONTEXT,
+function buildSessionContext({
+  contextText,
+  languageHints,
+}: {
+  contextText: string | undefined;
+  languageHints: SttLanguage[];
+}) {
+  return {
+    general: languageGeneralContext(languageHints),
+    ...(contextText !== undefined && contextText.length > 0 ? { text: contextText } : {}),
   };
-  if (contextText !== undefined && contextText.length > 0) {
-    context.text = contextText;
-  }
-  return context;
 }
 
 interface ServerToken {
@@ -91,10 +86,12 @@ export function startSession({
   apiKey,
   model,
   region,
+  languageHints,
   clientReferenceId,
   contextText,
   onEvent,
 }: SttOptions) {
+  const hints = normalizeLanguageHints(languageHints);
   return new Promise<SttSession>((resolve, reject) => {
     onEvent({ type: "state", state: "connecting" });
 
@@ -144,11 +141,12 @@ export function startSession({
         audio_format: "pcm_s16le",
         sample_rate: 16000,
         num_channels: 1,
-        language_hints: [...LANGUAGE_HINTS],
-        language_hints_strict: true,
+        language_hints: hints,
+        // Strict is strongest with a single language; multiple hints stay a bias only.
+        language_hints_strict: hints.length === 1,
         enable_speaker_diarization: true,
         enable_endpoint_detection: false,
-        context: buildSessionContext(contextText),
+        context: buildSessionContext({ contextText, languageHints: hints }),
       };
       if (clientReferenceId !== undefined) {
         config.client_reference_id = clientReferenceId;

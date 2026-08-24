@@ -11,6 +11,11 @@ import {
 import { copyToClipboard, osc52Sequence } from "#/lib/clipboard.js";
 import { loadApiKey, saveApiKey } from "#/lib/api-key.js";
 import { openJournal } from "#/lib/journal.js";
+import {
+  DEFAULT_LANGUAGE_HINTS,
+  normalizeLanguageHints,
+  type SttLanguage,
+} from "#/lib/languages.js";
 import { listMicrophones } from "#/lib/microphones.js";
 import { resolveRegion } from "#/lib/region.js";
 import { saveSettings, loadSettings } from "#/lib/settings.js";
@@ -67,6 +72,7 @@ export function LiveApp() {
   const journalPathRef = useRef<string | null>(null);
   const fatalMessageRef = useRef<string | null>(null);
   const regionRef = useRef<SttRegion>("us");
+  const languageHintsRef = useRef<SttLanguage[]>([...DEFAULT_LANGUAGE_HINTS]);
 
   const finish = useCallback(() => {
     const path = journalPathRef.current;
@@ -133,6 +139,7 @@ export function LiveApp() {
       device: deviceName,
       clientReferenceId: journal.id,
       region,
+      languageHints: languageHintsRef.current,
       onSnapshot: setSnapshot,
       onFatal: (message) => {
         fatalMessageRef.current = message;
@@ -170,6 +177,7 @@ export function LiveApp() {
     void (async () => {
       const [settings, region] = await Promise.all([loadSettings(), resolveRegion()]);
       regionRef.current = region;
+      languageHintsRef.current = normalizeLanguageHints(settings.languages);
       const apiKey = await loadApiKey(region);
       if (cancelled) return;
       if (apiKey === null) {

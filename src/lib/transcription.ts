@@ -1,4 +1,5 @@
 import { startCapture } from "#/lib/audio.js";
+import type { SttLanguage } from "#/lib/languages.js";
 import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
@@ -29,6 +30,7 @@ export interface TranscriptionOptions {
   device?: string;
   clientReferenceId: string;
   region?: SttRegion;
+  languageHints?: SttLanguage[];
   onSnapshot: (snapshot: TranscriptionSnapshot) => void;
   onFatal: (message: string) => void;
 }
@@ -46,6 +48,7 @@ export function createTranscription({
   device: deviceOption,
   clientReferenceId,
   region,
+  languageHints,
   onSnapshot,
   onFatal,
 }: TranscriptionOptions) {
@@ -174,6 +177,7 @@ export function createTranscription({
         apiKey,
         clientReferenceId,
         region,
+        languageHints,
         contextText: speechContext.length > 0 ? speechContext : undefined,
         onEvent: (event) => {
           if (stopped) return;
