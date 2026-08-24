@@ -1,5 +1,7 @@
 name: Capture binaries
 
+# Keep matrix package / rust_target / bin aligned with src/lib/capture-platforms.json
+
 on:
   push:
     tags: ["v*"]

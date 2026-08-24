@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 import { resolveCaptureBin } from "#/lib/capture-bin.js";
+import { captureSpawnEnv } from "#/lib/capture-process.js";
 import type { Microphone } from "#/lib/types";
 
 const DEVICE_LIST_TIMEOUT_MS = 5_000;
@@ -17,11 +18,15 @@ export async function listMicrophones() {
   }
 
   const raw = await new Promise<string>((resolve, reject) => {
-    const child = spawn(bin.path, ["list"], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin.path, ["list"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: captureSpawnEnv(),
+    });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      if (process.platform === "win32") child.kill();
+      else child.kill("SIGKILL");
       reject(new Error(`Timed out listing microphones after ${DEVICE_LIST_TIMEOUT_MS / 1000}s`));
     }, DEVICE_LIST_TIMEOUT_MS);
 

@@ -1,6 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import { resolveCaptureBin } from "#/lib/capture-bin.js";
+import { captureSpawnEnv, stopCaptureChild } from "#/lib/capture-process.js";
 import type { AudioCapture, AudioOptions } from "#/lib/types";
 
 // 100ms × 16kHz × 2 bytes (s16le) — same as desktop / earpop-capture.
@@ -27,22 +28,6 @@ function captureErrorMessage({ code, stderr }: { code: number | null; stderr: st
   return `Cannot use microphone: ${detail} — ${micPermissionHint()}`;
 }
 
-function stopProcess({ child, markStopped }: { child: ChildProcess; markStopped: () => void }) {
-  return new Promise<void>((resolve) => {
-    markStopped();
-    if (child.exitCode !== null || child.signalCode !== null) {
-      resolve();
-      return;
-    }
-    const killTimer = setTimeout(() => child.kill("SIGKILL"), TERM_GRACE_MS);
-    child.once("close", () => {
-      clearTimeout(killTimer);
-      resolve();
-    });
-    child.kill("SIGTERM");
-  });
-}
-
 export function startCapture({ device: deviceOption, onFrame, onError }: AudioOptions) {
   const device = deviceOption ?? "default";
   return new Promise<AudioCapture>((resolve, reject) => {
@@ -57,7 +42,10 @@ export function startCapture({ device: deviceOption, onFrame, onError }: AudioOp
       args.push("--device", device);
     }
 
-    const child = spawn(bin.path, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin.path, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: captureSpawnEnv(),
+    });
 
     let settled = false;
     let stopped = false;
@@ -114,8 +102,9 @@ export function startCapture({ device: deviceOption, onFrame, onError }: AudioOp
         resolve({
           device,
           stop: () =>
-            stopProcess({
+            stopCaptureChild({
               child,
+              graceMs: TERM_GRACE_MS,
               markStopped: () => {
                 stopped = true;
               },

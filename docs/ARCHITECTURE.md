@@ -40,6 +40,26 @@ Principles:
 - **React draws only.** Audio/WS/files live in the controller; same modules work without UI (`transcripts` commands).
 - **Single source of history:** journal owns full finals; UI holds a short **tail** so render cost stays flat.
 
+## Capture packaging
+
+```text
+earpop-cli (JS, dist/)
+  optionalDependencies → earpop-capture-<os>-<cpu>  (one binary each)
+
+Repo:
+  src/lib/capture-platforms.json   # os/cpu/package/bin/rustTarget (source of truth)
+  src/lib/capture-integrity.json   # SHA-256 per package (filled on publish)
+  npm/earpop-capture-*/            # platform package shells + staged bin/
+  crates/earpop-capture/           # Rust sidecar source
+  .github/workflows/capture.yml    # native CI matrix (keep aligned with platforms JSON)
+```
+
+Resolve order (`capture-bin.ts`): `EARPOP_CAPTURE_BIN` → `target/release` → optional npm package → workspace `npm/*/bin`.
+Published optional packages are SHA-256 checked when the integrity map is non-empty.
+Sidecar processes get a **minimal env** (no API keys); see `capture-process.ts`.
+
+Local: `pnpm capture:build` (host only). Release: CI builds each OS natively → stage → `publish-capture.mjs --publish` (platform packages first, then root).
+
 ## Latency budget
 
 | Stage              | Latency    | Choice                                              |
@@ -103,14 +123,14 @@ Storage locations for users are documented in the README. Architecturally:
 
 ## Stack choices (locked)
 
-| Role     | Choice                                                                        |
-| -------- | ----------------------------------------------------------------------------- |
-| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7                     |
-| Package  | pnpm; `prepublishOnly` = `tsup`; capture via `optionalDependencies`           |
-| UI       | ink 7 + @inkjs/ui, React 19                                                   |
-| WS       | `ws` (deflate off, `bufferedAmount`, binary control)                          |
-| Mic      | Rust sidecar; per-platform npm packages `earpop-capture-*` (CI native matrix) |
-| CLI args | raw `process.argv` (few commands)                                             |
-| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only            |
+| Role     | Choice                                                                                |
+| -------- | ------------------------------------------------------------------------------------- |
+| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7                             |
+| Package  | pnpm workspace; root `dist/` + `optionalDependencies` platform capture packages       |
+| UI       | ink 7 + @inkjs/ui, React 19                                                           |
+| WS       | `ws` (deflate off, `bufferedAmount`, binary control)                                  |
+| Mic      | Rust `earpop-capture` (cpal + rubato); CI-native builds; SHA-256 integrity on publish |
+| CLI args | raw `process.argv` (few commands)                                                     |
+| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only                    |
 
 Runtime deps: ink, @inkjs/ui, react, ws.

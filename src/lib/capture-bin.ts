@@ -1,7 +1,11 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import platforms from "#/lib/capture-platforms.json";
+import integrity from "#/lib/capture-integrity.json";
 
 const CAPTURE_MISSING =
   "Microphone capture helper is missing. Run `pnpm capture:build` (dev) or reinstall earpop-cli.";
@@ -9,33 +13,11 @@ const CAPTURE_MISSING =
 const PLATFORM_UNSUPPORTED =
   "Live microphone capture requires macOS, Windows, or Linux. Listing and exporting transcripts still work on this platform.";
 
-/** Platform package + binary name for the current Node runtime. */
-function platformCapture() {
-  if (process.platform === "darwin") {
-    if (process.arch === "arm64") {
-      return { package: "earpop-capture-darwin-arm64", bin: "earpop-capture" };
-    }
-    if (process.arch === "x64") {
-      return { package: "earpop-capture-darwin-x64", bin: "earpop-capture" };
-    }
-    return null;
-  }
-  if (process.platform === "win32") {
-    if (process.arch === "x64") {
-      return { package: "earpop-capture-win32-x64", bin: "earpop-capture.exe" };
-    }
-    return null;
-  }
-  if (process.platform === "linux") {
-    if (process.arch === "x64") {
-      return { package: "earpop-capture-linux-x64", bin: "earpop-capture" };
-    }
-    if (process.arch === "arm64") {
-      return { package: "earpop-capture-linux-arm64", bin: "earpop-capture" };
-    }
-    return null;
-  }
-  return null;
+type CapturePlatform = (typeof platforms)[number];
+type IntegrityMap = Record<string, string>;
+
+function platformCapture(): CapturePlatform | null {
+  return platforms.find((p) => p.os === process.platform && p.cpu === process.arch) ?? null;
 }
 
 function looksLikePackageRoot(dir: string) {
@@ -66,9 +48,31 @@ function releaseBinName() {
   return process.platform === "win32" ? "earpop-capture.exe" : "earpop-capture";
 }
 
-function resolveOptionalPackageBin({ package: pkgName, bin }: { package: string; bin: string }) {
+function sha256File(path: string) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function verifyIntegrity({ package: pkgName, path }: { package: string; path: string }) {
+  if (process.env.EARPOP_SKIP_CAPTURE_INTEGRITY === "1") {
+    return { ok: true as const };
+  }
+  const expected = (integrity as IntegrityMap)[pkgName];
+  if (expected === undefined || expected.length === 0) {
+    // Empty map in-repo until the first publish fills hashes.
+    return { ok: true as const };
+  }
+  const actual = sha256File(path);
+  if (actual !== expected) {
+    return {
+      ok: false as const,
+      message: `Capture helper integrity check failed for ${pkgName}. Reinstall earpop-cli or set EARPOP_SKIP_CAPTURE_INTEGRITY=1 only for local builds.`,
+    };
+  }
+  return { ok: true as const };
+}
+
+function resolveOptionalPackageBin({ package: pkgName, bin }: CapturePlatform) {
   try {
-    // Resolve from package root so tsx (src/) and tsup (dist/) both work.
     const require = createRequire(join(packageRoot(), "package.json"));
     const pkgJson = require.resolve(`${pkgName}/package.json`);
     const path = join(dirname(pkgJson), "bin", bin);
@@ -79,7 +83,7 @@ function resolveOptionalPackageBin({ package: pkgName, bin }: { package: string;
   return null;
 }
 
-function resolveWorkspaceBin({ package: pkgName, bin }: { package: string; bin: string }) {
+function resolveWorkspaceBin({ package: pkgName, bin }: CapturePlatform) {
   const path = join(packageRoot(), "npm", pkgName, "bin", bin);
   return existsSync(path) ? path : null;
 }
@@ -91,6 +95,7 @@ export function resolveCaptureBin() {
     if (!existsSync(fromEnv)) {
       return { ok: false as const, message: `EARPOP_CAPTURE_BIN not found: ${fromEnv}` };
     }
+    // Dev override — skip release integrity map.
     return { ok: true as const, path: fromEnv };
   }
 
@@ -107,11 +112,15 @@ export function resolveCaptureBin() {
 
   const fromOptional = resolveOptionalPackageBin(platform);
   if (fromOptional) {
+    const check = verifyIntegrity({ package: platform.package, path: fromOptional });
+    if (!check.ok) return check;
     return { ok: true as const, path: fromOptional };
   }
 
   const fromWorkspace = resolveWorkspaceBin(platform);
   if (fromWorkspace) {
+    const check = verifyIntegrity({ package: platform.package, path: fromWorkspace });
+    if (!check.ok) return check;
     return { ok: true as const, path: fromWorkspace };
   }
 

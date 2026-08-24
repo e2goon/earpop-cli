@@ -10,7 +10,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const platforms = JSON.parse(readFileSync(join(ROOT, "scripts/capture-platforms.json"), "utf8"));
+const platforms = JSON.parse(
+  readFileSync(join(ROOT, "src/lib/capture-platforms.json"), "utf8"),
+);
 
 function hostPlatform() {
   const os = process.platform;

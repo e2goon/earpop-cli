@@ -4,39 +4,34 @@
     "os": "darwin",
     "cpu": "arm64",
     "rustTarget": "aarch64-apple-darwin",
-    "bin": "earpop-capture",
-    "ci": { "runner": "macos-14", "useHostTriple": true }
+    "bin": "earpop-capture"
   },
   {
     "package": "earpop-capture-darwin-x64",
     "os": "darwin",
     "cpu": "x64",
     "rustTarget": "x86_64-apple-darwin",
-    "bin": "earpop-capture",
-    "ci": { "runner": "macos-14", "useHostTriple": false }
+    "bin": "earpop-capture"
   },
   {
     "package": "earpop-capture-win32-x64",
     "os": "win32",
     "cpu": "x64",
     "rustTarget": "x86_64-pc-windows-msvc",
-    "bin": "earpop-capture.exe",
-    "ci": { "runner": "windows-latest", "useHostTriple": true }
+    "bin": "earpop-capture.exe"
   },
   {
     "package": "earpop-capture-linux-x64",
     "os": "linux",
     "cpu": "x64",
     "rustTarget": "x86_64-unknown-linux-gnu",
-    "bin": "earpop-capture",
-    "ci": { "runner": "ubuntu-latest", "useHostTriple": true, "apt": ["libasound2-dev", "pkg-config"] }
+    "bin": "earpop-capture"
   },
   {
     "package": "earpop-capture-linux-arm64",
     "os": "linux",
     "cpu": "arm64",
     "rustTarget": "aarch64-unknown-linux-gnu",
-    "bin": "earpop-capture",
-    "ci": { "runner": "ubuntu-24.04-arm", "useHostTriple": true, "apt": ["libasound2-dev", "pkg-config"] }
+    "bin": "earpop-capture"
   }
 ]

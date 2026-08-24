@@ -40,11 +40,12 @@ On first run you are prompted for an API key and microphone. Change them anytime
 
 ## Environment & storage
 
-| Variable             | Description                                                                  |
-| -------------------- | ---------------------------------------------------------------------------- |
-| `SONIOX_API_KEY`     | API key. When set, **always wins** over keychain/file                        |
-| `SONIOX_REGION`      | `us` \| `eu` \| `jp` (default `us`). Overrides `region` in the settings file |
-| `EARPOP_CAPTURE_BIN` | Optional path to the capture sidecar (dev override)                          |
+| Variable                        | Description                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `SONIOX_API_KEY`                | API key. When set, **always wins** over keychain/file                        |
+| `SONIOX_REGION`                 | `us` \| `eu` \| `jp` (default `us`). Overrides `region` in the settings file |
+| `EARPOP_CAPTURE_BIN`            | Optional path to the capture sidecar (dev override; skips integrity check)   |
+| `EARPOP_SKIP_CAPTURE_INTEGRITY` | Set to `1` to skip SHA-256 checks on optional/workspace capture binaries     |
 
 On macOS, API keys live in the Keychain:
 
