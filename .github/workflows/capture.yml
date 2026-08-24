@@ -116,14 +116,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: capture-npm-packages
-          path: .
-
-      - name: Ensure executable bits
-        run: find npm -type f -path '*/bin/*' ! -name '.gitkeep' -exec chmod +x {} +
-
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -134,6 +126,24 @@ jobs:
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
+
+      # upload-artifact of path `npm/` stores package dirs at the artifact root (no `npm/` prefix).
+      - uses: actions/download-artifact@v4
+        with:
+          name: capture-npm-packages
+          path: npm
+
+      - name: Verify staged binaries
+        run: |
+          set -euo pipefail
+          find npm -type f -path '*/bin/*' ! -name '.gitkeep' | sort
+          for pkg in earpop-capture-darwin-arm64 earpop-capture-darwin-x64 earpop-capture-linux-x64 earpop-capture-linux-arm64; do
+            test -f "npm/${pkg}/bin/earpop-capture"
+          done
+          test -f npm/earpop-capture-win32-x64/bin/earpop-capture.exe
+
+      - name: Ensure executable bits
+        run: find npm -type f -path '*/bin/*' ! -name '.gitkeep' -exec chmod +x {} +
 
       - name: Verify tag matches package.json
         run: |
