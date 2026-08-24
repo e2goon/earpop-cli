@@ -1,0 +1,106 @@
+# Keep matrix package / rust_target / bin aligned with src/lib/capture-platforms.json
+# Runs on GitHub Actions (push tags v* or workflow_dispatch).
+name: Capture binaries
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.package }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: earpop-capture-darwin-arm64
+            runner: macos-14
+            rust_target: aarch64-apple-darwin
+            bin: earpop-capture
+            host_triple: true
+          - package: earpop-capture-darwin-x64
+            runner: macos-14
+            rust_target: x86_64-apple-darwin
+            bin: earpop-capture
+            host_triple: false
+          - package: earpop-capture-win32-x64
+            runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            bin: earpop-capture.exe
+            host_triple: true
+          - package: earpop-capture-linux-x64
+            runner: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            bin: earpop-capture
+            host_triple: true
+            apt: true
+          - package: earpop-capture-linux-arm64
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            bin: earpop-capture
+            host_triple: true
+            apt: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ALSA headers
+        if: matrix.apt
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build (host triple)
+        if: matrix.host_triple
+        run: cargo build --release -p earpop-capture
+
+      - name: Build (cross target)
+        if: ${{ !matrix.host_triple }}
+        run: cargo build --release -p earpop-capture --target ${{ matrix.rust_target }}
+
+      - name: Stage into npm package
+        shell: bash
+        run: |
+          if [[ "${{ matrix.host_triple }}" == "true" ]]; then
+            FROM="target/release/${{ matrix.bin }}"
+          else
+            FROM="target/${{ matrix.rust_target }}/release/${{ matrix.bin }}"
+          fi
+          node scripts/stage-capture.mjs --package "${{ matrix.package }}" --from "$FROM"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package }}
+          path: npm/${{ matrix.package }}/bin/${{ matrix.bin }}
+          if-no-files-found: error
+
+  assemble:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Place binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in artifacts/earpop-capture-*; do
+            pkg="$(basename "$dir")"
+            mkdir -p "npm/${pkg}/bin"
+            cp "$dir"/* "npm/${pkg}/bin/"
+            chmod +x "npm/${pkg}/bin/"* || true
+          done
+          find npm -type f -path '*/bin/*' ! -name '.gitkeep' | sort
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capture-npm-packages
+          path: npm/

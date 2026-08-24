@@ -1,10 +1,11 @@
 import { startCapture } from "#/lib/audio.js";
 import { saveSettings } from "#/lib/settings.js";
-import { startSession } from "#/lib/soniox.js";
+import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
 
 const TAIL_CHARS = 2_000;
 
+// Throttle non-token paints (elapsed clock). Token snapshots paint immediately.
 const UI_EMIT_INTERVAL_MS = 150;
 
 const BACKOFF_INITIAL_MS = 1_000;
@@ -74,6 +75,7 @@ export function createTranscription({
   let stateMessage: string | undefined;
   let finalTokens: Token[] = [];
   let pendingTokens: Token[] = [];
+  let speechContext = "";
   let startedAtMs = 0;
   let listeningSinceMs = 0;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
@@ -172,6 +174,7 @@ export function createTranscription({
         apiKey,
         clientReferenceId,
         region,
+        contextText: speechContext.length > 0 ? speechContext : undefined,
         onEvent: (event) => {
           if (stopped) return;
           if (event.type === "state") {
@@ -197,9 +200,11 @@ export function createTranscription({
             if (event.final.length > 0) {
               journal.tokens(event.final);
               pushTail(event.final);
+              speechContext = appendSttContext({ text: speechContext, tokens: event.final });
             }
             pendingTokens = event.pending;
-            emit();
+            // Captions first: do not coalesce provisional tokens behind the paint interval.
+            emit(true);
           } else if (event.type === "finished") {
           }
         },

@@ -5,7 +5,7 @@ Live speech-to-text in the terminal via Soniox realtime STT. The binary name is 
 ## Requirements
 
 - **Node.js** 24+ (Active LTS)
-- **ffmpeg** on `PATH` (macOS: `brew install ffmpeg`)
+- **macOS, Windows, or Linux** for live microphone capture (`earpop-capture` optional dependency; no ffmpeg)
 - **Soniox API key** from [Soniox](https://soniox.com). The key’s project region (`us` / `eu` / `jp`) must match the CLI region.
 
 ## Install
@@ -40,10 +40,12 @@ On first run you are prompted for an API key and microphone. Change them anytime
 
 ## Environment & storage
 
-| Variable         | Description                                                                  |
-| ---------------- | ---------------------------------------------------------------------------- |
-| `SONIOX_API_KEY` | API key. When set, **always wins** over keychain/file                        |
-| `SONIOX_REGION`  | `us` \| `eu` \| `jp` (default `us`). Overrides `region` in the settings file |
+| Variable                        | Description                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `SONIOX_API_KEY`                | API key. When set, **always wins** over keychain/file                        |
+| `SONIOX_REGION`                 | `us` \| `eu` \| `jp` (default `us`). Overrides `region` in the settings file |
+| `EARPOP_CAPTURE_BIN`            | Optional path to the capture sidecar (dev override; skips integrity check)   |
+| `EARPOP_SKIP_CAPTURE_INTEGRITY` | Set to `1` to skip SHA-256 checks on optional/workspace capture binaries     |
 
 On macOS, API keys live in the Keychain:
 
@@ -59,7 +61,13 @@ Transcript files:
 
 ## Platform notes
 
-Mic listing and capture use **ffmpeg + avfoundation**, so **macOS is the primary target**. On Linux/Windows, listing/exporting transcripts and storing keys may work, but live mic capture may not.
+Live mic listing and capture use a **cpal + rubato** sidecar. npm installs only the matching optional package:
+
+- **macOS** — `earpop-capture-darwin-arm64` / `earpop-capture-darwin-x64`
+- **Windows** — `earpop-capture-win32-x64`
+- **Linux** — `earpop-capture-linux-x64` / `earpop-capture-linux-arm64` (ALSA)
+
+Listing/exporting transcripts and storing keys work without the capture helper.
 
 ## License
 

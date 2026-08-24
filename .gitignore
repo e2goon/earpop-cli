@@ -3,3 +3,7 @@ dist/
 scratchpad/
 .codegraph/
 .cursor/
+target/
+vendor/
+npm/*/bin/earpop-capture
+npm/*/bin/earpop-capture.exe

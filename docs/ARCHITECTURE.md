@@ -28,7 +28,7 @@ Why this CLI is structured the way it is.
             │ frames       │ tokens/state     │ final tokens
      ┌──────┴────────┐ ┌───┴───────┐ ┌────────▼─────┐ ┌────────────────┐
      │ lib/audio.ts  │ │lib/soniox │ │lib/journal.ts│ │ api-key /      │
-     │ ffmpeg capture│ │ ws        │ │ JSONL append │ │ settings       │
+     │ earpop-capture│ │ ws        │ │ JSONL append │ │ settings       │
      └──────▲────────┘ └────▲──────┘ └───────▲──────┘ └───────▲────────┘
          mic            Soniox          transcripts/      keychain, etc.
 ```
@@ -40,23 +40,47 @@ Principles:
 - **React draws only.** Audio/WS/files live in the controller; same modules work without UI (`transcripts` commands).
 - **Single source of history:** journal owns full finals; UI holds a short **tail** so render cost stays flat.
 
+## Capture packaging
+
+```text
+earpop-cli (JS, dist/)
+  optionalDependencies → earpop-capture-<os>-<cpu>  (one binary each)
+
+Repo:
+  src/lib/capture-platforms.json   # os/cpu/package/bin/rustTarget (source of truth)
+  src/lib/capture-integrity.json   # SHA-256 per package (filled on publish)
+  npm/earpop-capture-*/            # platform package shells + staged bin/
+  crates/earpop-capture/           # Rust sidecar source
+  .github/workflows/capture.yml    # GitHub Actions native matrix (keep aligned with platforms JSON)
+```
+
+Resolve order (`capture-bin.ts`): `EARPOP_CAPTURE_BIN` → `target/release` → optional npm package → workspace `npm/*/bin`.
+Published optional packages are SHA-256 checked when the integrity map is non-empty.
+Sidecar processes get a **minimal env** (no API keys); see `capture-process.ts`.
+
+Local: `pnpm capture:build` (host only). Release: GitHub Actions builds each OS natively → stage → `publish-capture.mjs --publish` (platform packages first, then root).
+
 ## Latency budget
 
 | Stage              | Latency    | Choice                                              |
 | ------------------ | ---------- | --------------------------------------------------- |
-| Mic → ffmpeg out   | ~100ms     | raw s16le; cut 3200-byte (100ms) frames immediately |
+| Mic → capture out  | ~100ms     | cpal+rubato sidecar; 3200-byte (100ms) s16le frames |
 | Frame → socket     | ~0         | send as soon as a frame fills; no batching          |
 | Socket             | tens of ms | `perMessageDeflate: false`                          |
 | Soniox provisional | 200–400ms  | server-side                                         |
-| Token → UI         | &lt;5ms    | one setState per message; fixed ~6-line render      |
+| Token → UI         | immediate  | token events paint without coalesce                 |
 
-Provisional text usually appears ~0.3–0.6s after speech; the server dominates.
+Provisional captions are the priority; finals may arrive later.
+Endpoint detection stays off so early finalization does not trade away word/diarization accuracy.
+Korean-primary bias: `language_hints: ["ko","en"]` + `language_hints_strict`, plus `context.general`
+and a rolling final-text tail on reconnect (same idea as desktop).
+Mic path matches desktop quality: **cpal + rubato FFT** resample to 16 kHz (not ffmpeg).
 
 ## Data flow
 
 ```text
 [hot]
-ffmpeg stdout ──3200B──▶ transcription ──sendAudio──▶ ws
+earpop-capture stdout ──3200B──▶ transcription ──sendAudio──▶ ws
 ws ──token JSON──▶ transcription ──snapshot──▶ caption (1× setState)
 
 [cold]
@@ -99,14 +123,14 @@ Storage locations for users are documented in the README. Architecturally:
 
 ## Stack choices (locked)
 
-| Role     | Choice                                                             |
-| -------- | ------------------------------------------------------------------ |
-| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7          |
-| Package  | pnpm; npm-compatible `prepublishOnly` (`tsup`)                     |
-| UI       | ink 7 + @inkjs/ui, React 19                                        |
-| WS       | `ws` (deflate off, `bufferedAmount`, binary control)               |
-| Mic      | ffmpeg avfoundation child; list via `-list_devices`                |
-| CLI args | raw `process.argv` (few commands)                                  |
-| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only |
+| Role     | Choice                                                                                |
+| -------- | ------------------------------------------------------------------------------------- |
+| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7                             |
+| Package  | pnpm workspace; root `dist/` + `optionalDependencies` platform capture packages       |
+| UI       | ink 7 + @inkjs/ui, React 19                                                           |
+| WS       | `ws` (deflate off, `bufferedAmount`, binary control)                                  |
+| Mic      | Rust `earpop-capture` (cpal + rubato); CI-native builds; SHA-256 integrity on publish |
+| CLI args | raw `process.argv` (few commands)                                                     |
+| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only                    |
 
 Runtime deps: ink, @inkjs/ui, react, ws.

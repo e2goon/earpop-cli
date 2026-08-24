@@ -5,12 +5,50 @@ import type { SttEvent, SttOptions, SttRegion, SttSession, Token } from "#/lib/t
 
 export const STT_MODEL = "stt-rt-v5";
 
+/** Keep a short rolling transcript for Soniox context on reconnect (matches desktop). */
+export const STT_CONTEXT_CHARS = 1_500;
+
 const CONNECT_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 5_000;
 // Server drops after 20s silence; keepalive at half that interval.
 const KEEPALIVE_INTERVAL_MS = 10_000;
-// ~50 × 3200-byte frames ≈ 5s; drop audio when backlog exceeds this.
+// ~5s of 16 kHz mono s16le; drop audio when backlog exceeds this.
 const BACKLOG_LIMIT_BYTES = 160 * 1024;
+
+// ~90% Korean / ~10% English mix: ko first, strict bias, still allow en code-switch.
+const LANGUAGE_HINTS = ["ko", "en"] as const;
+
+const LANGUAGE_GENERAL_CONTEXT = [
+  { key: "language", value: "Korean" },
+  {
+    key: "instructions",
+    value:
+      "Speech is primarily Korean with occasional English words or short phrases. Prefer Hangul for Korean. Keep English words and loanwords in Latin script.",
+  },
+  { key: "setting", value: "Casual live conversation transcription" },
+] as const;
+
+export function appendSttContext({ text, tokens }: { text: string; tokens: Token[] }) {
+  let next = text;
+  for (const token of tokens) {
+    next += token.text;
+  }
+  const chars = [...next];
+  if (chars.length > STT_CONTEXT_CHARS) {
+    return chars.slice(-STT_CONTEXT_CHARS).join("");
+  }
+  return next;
+}
+
+function buildSessionContext(contextText: string | undefined) {
+  const context: { general: typeof LANGUAGE_GENERAL_CONTEXT; text?: string } = {
+    general: LANGUAGE_GENERAL_CONTEXT,
+  };
+  if (contextText !== undefined && contextText.length > 0) {
+    context.text = contextText;
+  }
+  return context;
+}
 
 interface ServerToken {
   text?: string;
@@ -49,7 +87,14 @@ function isFatalErrorCode(code: number) {
   return code === 401 || code === 402;
 }
 
-export function startSession({ apiKey, model, region, clientReferenceId, onEvent }: SttOptions) {
+export function startSession({
+  apiKey,
+  model,
+  region,
+  clientReferenceId,
+  contextText,
+  onEvent,
+}: SttOptions) {
   return new Promise<SttSession>((resolve, reject) => {
     onEvent({ type: "state", state: "connecting" });
 
@@ -92,17 +137,18 @@ export function startSession({ apiKey, model, region, clientReferenceId, onEvent
 
     socket.on("open", () => {
       clearTimeout(connectTimeout);
+      // Endpoint off: provisional streams fast; finals come later with better word/diarization accuracy.
       const config: Record<string, unknown> = {
         api_key: apiKey,
         model: model ?? STT_MODEL,
         audio_format: "pcm_s16le",
         sample_rate: 16000,
         num_channels: 1,
-        language_hints: ["ko", "en"],
+        language_hints: [...LANGUAGE_HINTS],
+        language_hints_strict: true,
         enable_speaker_diarization: true,
-        enable_endpoint_detection: true,
-        endpoint_latency_adjustment_level: 1,
-        max_endpoint_delay_ms: 1500,
+        enable_endpoint_detection: false,
+        context: buildSessionContext(contextText),
       };
       if (clientReferenceId !== undefined) {
         config.client_reference_id = clientReferenceId;

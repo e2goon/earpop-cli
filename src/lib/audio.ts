@@ -1,62 +1,51 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
 
+import { resolveCaptureBin } from "#/lib/capture-bin.js";
+import { captureSpawnEnv, stopCaptureChild } from "#/lib/capture-process.js";
 import type { AudioCapture, AudioOptions } from "#/lib/types";
 
-// 100ms × 16kHz × 2 bytes (s16le) — Soniox frame size.
+// 100ms × 16kHz × 2 bytes (s16le) — same as desktop / earpop-capture.
 const FRAME_BYTES = 3200;
 
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
 const TERM_GRACE_MS = 2_000;
 
-export const FFMPEG_MISSING =
-  "ffmpeg is not installed. Run `brew install ffmpeg` in your terminal, then try again.";
+function micPermissionHint() {
+  if (process.platform === "darwin") {
+    return "allow this terminal app under System Settings > Privacy & Security > Microphone";
+  }
+  if (process.platform === "win32") {
+    return "allow microphone access in Windows Settings > Privacy & security > Microphone";
+  }
+  if (process.platform === "linux") {
+    return "check microphone permissions and that ALSA/PipeWire can open the device";
+  }
+  return "check microphone permissions";
+}
 
 function captureErrorMessage({ code, stderr }: { code: number | null; stderr: string }) {
   const detail = stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${code ?? "unknown"}`;
-  return `Cannot use microphone: ${detail} — allow this terminal app under System Settings > Privacy & Security > Microphone`;
-}
-
-function stopProcess({
-  child,
-  markStopped,
-}: {
-  child: ChildProcessWithoutNullStreams;
-  markStopped: () => void;
-}) {
-  return new Promise<void>((resolve) => {
-    markStopped();
-    if (child.exitCode !== null || child.signalCode !== null) {
-      resolve();
-      return;
-    }
-    const killTimer = setTimeout(() => child.kill("SIGKILL"), TERM_GRACE_MS);
-    child.once("close", () => {
-      clearTimeout(killTimer);
-      resolve();
-    });
-    child.kill("SIGTERM");
-  });
+  return `Cannot use microphone: ${detail} — ${micPermissionHint()}`;
 }
 
 export function startCapture({ device: deviceOption, onFrame, onError }: AudioOptions) {
   const device = deviceOption ?? "default";
   return new Promise<AudioCapture>((resolve, reject) => {
-    const child = spawn("ffmpeg", [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "avfoundation",
-      "-i",
-      `:${device}`,
-      "-ar",
-      "16000",
-      "-ac",
-      "1",
-      "-f",
-      "s16le",
-      "-",
-    ]);
+    const bin = resolveCaptureBin();
+    if (!bin.ok) {
+      reject(new Error(bin.message));
+      return;
+    }
+
+    const args = ["capture"];
+    if (device !== "default") {
+      args.push("--device", device);
+    }
+
+    const child = spawn(bin.path, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: captureSpawnEnv(),
+    });
 
     let settled = false;
     let stopped = false;
@@ -79,7 +68,11 @@ export function startCapture({ device: deviceOption, onFrame, onError }: AudioOp
     );
 
     child.on("error", (error: NodeJS.ErrnoException) => {
-      fail(error.code === "ENOENT" ? FFMPEG_MISSING : `Failed to run ffmpeg: ${error.message}`);
+      fail(
+        error.code === "ENOENT"
+          ? `Failed to run capture helper: ${bin.path}`
+          : `Failed to run capture helper: ${error.message}`,
+      );
     });
 
     child.on("close", (code) => {
@@ -109,8 +102,9 @@ export function startCapture({ device: deviceOption, onFrame, onError }: AudioOp
         resolve({
           device,
           stop: () =>
-            stopProcess({
+            stopCaptureChild({
               child,
+              graceMs: TERM_GRACE_MS,
               markStopped: () => {
                 stopped = true;
               },

@@ -24,6 +24,8 @@ export interface SttOptions {
   model?: string;
   region?: SttRegion;
   clientReferenceId?: string;
+  /** Recent final transcript tail; biases recognition on reconnect. */
+  contextText?: string;
   onEvent: (event: SttEvent) => void;
 }
 

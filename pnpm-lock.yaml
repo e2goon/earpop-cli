@@ -45,6 +45,32 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+    optionalDependencies:
+      earpop-capture-darwin-arm64:
+        specifier: workspace:*
+        version: link:npm/earpop-capture-darwin-arm64
+      earpop-capture-darwin-x64:
+        specifier: workspace:*
+        version: link:npm/earpop-capture-darwin-x64
+      earpop-capture-linux-arm64:
+        specifier: workspace:*
+        version: link:npm/earpop-capture-linux-arm64
+      earpop-capture-linux-x64:
+        specifier: workspace:*
+        version: link:npm/earpop-capture-linux-x64
+      earpop-capture-win32-x64:
+        specifier: workspace:*
+        version: link:npm/earpop-capture-win32-x64
+
+  npm/earpop-capture-darwin-arm64: {}
+
+  npm/earpop-capture-darwin-x64: {}
+
+  npm/earpop-capture-linux-arm64: {}
+
+  npm/earpop-capture-linux-x64: {}
+
+  npm/earpop-capture-win32-x64: {}
 
 packages:
 
