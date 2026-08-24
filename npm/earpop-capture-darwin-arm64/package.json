@@ -1,11 +1,17 @@
 {
   "name": "earpop-capture-darwin-arm64",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "earpop-cli microphone capture sidecar (darwin arm64)",
   "license": "MIT",
-  "os": ["darwin"],
-  "cpu": ["arm64"],
-  "files": ["bin"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin"
+  ],
   "publishConfig": {
     "access": "public"
   }
