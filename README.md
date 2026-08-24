@@ -5,7 +5,7 @@ Live speech-to-text in the terminal via Soniox realtime STT. The binary name is 
 ## Requirements
 
 - **Node.js** 24+ (Active LTS)
-- **ffmpeg** on `PATH` (macOS: `brew install ffmpeg`)
+- **macOS** for live microphone capture (bundled `earpop-capture` helper; no ffmpeg)
 - **Soniox API key** from [Soniox](https://soniox.com). The key’s project region (`us` / `eu` / `jp`) must match the CLI region.
 
 ## Install
@@ -40,10 +40,11 @@ On first run you are prompted for an API key and microphone. Change them anytime
 
 ## Environment & storage
 
-| Variable         | Description                                                                  |
-| ---------------- | ---------------------------------------------------------------------------- |
-| `SONIOX_API_KEY` | API key. When set, **always wins** over keychain/file                        |
-| `SONIOX_REGION`  | `us` \| `eu` \| `jp` (default `us`). Overrides `region` in the settings file |
+| Variable             | Description                                                                  |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `SONIOX_API_KEY`     | API key. When set, **always wins** over keychain/file                        |
+| `SONIOX_REGION`      | `us` \| `eu` \| `jp` (default `us`). Overrides `region` in the settings file |
+| `EARPOP_CAPTURE_BIN` | Optional path to the capture sidecar (dev override)                          |
 
 On macOS, API keys live in the Keychain:
 
@@ -59,7 +60,7 @@ Transcript files:
 
 ## Platform notes
 
-Mic listing and capture use **ffmpeg + avfoundation**, so **macOS is the primary target**. On Linux/Windows, listing/exporting transcripts and storing keys may work, but live mic capture may not.
+Live mic listing and capture use a bundled **cpal + rubato** sidecar (`earpop-capture`) on **macOS** (arm64 / x64). On Linux/Windows, listing/exporting transcripts and storing keys may work, but live mic capture is not supported yet.
 
 ## License
 

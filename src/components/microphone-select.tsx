@@ -34,7 +34,7 @@ export function MicrophoneSelect(props: MicrophoneSelectProps) {
     return (
       <Box flexDirection="column">
         <Text color="red">No microphones available.</Text>
-        <Text dimColor>Make sure ffmpeg is installed and a microphone is connected.</Text>
+        <Text dimColor>Connect a microphone and allow access in System Settings.</Text>
       </Box>
     );
   }

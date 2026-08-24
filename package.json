@@ -19,19 +19,22 @@
     "earpop": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "vendor"
   ],
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
     "dev": "tsx src/index.tsx",
     "build": "tsup",
+    "capture:build": "bash scripts/build-capture.sh host",
+    "capture:build:mac": "bash scripts/build-capture.sh mac",
     "check": "tsc --noEmit",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "prepublishOnly": "tsup"
+    "prepublishOnly": "bash scripts/build-capture.sh mac && tsup"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",

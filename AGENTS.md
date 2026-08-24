@@ -27,12 +27,16 @@ Do not duplicate those docs here — follow the link for the topic.
 ## Tooling
 
 - Node **24+** (Active LTS), **pnpm** (`packageManager` in `package.json`)
-- `pnpm dev` — run CLI via tsx
-- `pnpm build` / `prepublishOnly` — **tsup** → `dist/` (keep tsup unless there is a concrete need; do not switch to Rolldown/`tsdown` for speed alone)
+- Rust (**1.85+**) for the capture sidecar (`crates/earpop-capture`)
+- `pnpm capture:build` — build sidecar for this host (also copies into `vendor/` on macOS)
+- `pnpm capture:build:mac` — build `darwin-arm64` + `darwin-x64` into `vendor/`
+- `pnpm dev` — run CLI via tsx (uses `target/release/earpop-capture` or `vendor/`)
+- `pnpm build` — **tsup** only → `dist/` (does **not** build capture binaries; keep tsup unless there is a concrete need; do not switch to Rolldown/`tsdown` for speed alone)
+- `prepublishOnly` — `capture:build:mac` + **tsup**; must run on **macOS** when publishing a package that ships live capture (`vendor/` + `dist/`)
 - `pnpm check` — `tsc --noEmit`
 - `pnpm lint` / `lint:fix` — Oxlint
 - `pnpm fmt` / `fmt:check` — Oxfmt
-- Publish surface: `bin.earpop` → `dist/index.js`; npm `files`: **`dist` only** (`LICENSE` / `README` included by npm)
+- Publish surface: `bin.earpop` → `dist/index.js`; npm `files`: **`dist`** + **`vendor`** (`LICENSE` / `README` included by npm)
 
 ## Layout (where to edit)
 
@@ -44,7 +48,11 @@ src/
   hooks/
   lib/          # audio, soniox, journal, settings, transcription controller
 
+crates/
+  earpop-capture/  # cpal+rubato sidecar → 16 kHz mono PCM stdout
+
 docs/           # CONVENTIONS, CONTRIBUTING, ARCHITECTURE (not user-facing npm docs)
 ```
 
 Import alias: `#/*` → `src/*` (tsconfig + tsup).
+`vendor/` and `target/` are gitignored; publish builds binaries into `vendor/` via `prepublishOnly`.

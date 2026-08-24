@@ -28,7 +28,7 @@ Why this CLI is structured the way it is.
             │ frames       │ tokens/state     │ final tokens
      ┌──────┴────────┐ ┌───┴───────┐ ┌────────▼─────┐ ┌────────────────┐
      │ lib/audio.ts  │ │lib/soniox │ │lib/journal.ts│ │ api-key /      │
-     │ ffmpeg capture│ │ ws        │ │ JSONL append │ │ settings       │
+     │ earpop-capture│ │ ws        │ │ JSONL append │ │ settings       │
      └──────▲────────┘ └────▲──────┘ └───────▲──────┘ └───────▲────────┘
          mic            Soniox          transcripts/      keychain, etc.
 ```
@@ -44,19 +44,23 @@ Principles:
 
 | Stage              | Latency    | Choice                                              |
 | ------------------ | ---------- | --------------------------------------------------- |
-| Mic → ffmpeg out   | ~100ms     | raw s16le; cut 3200-byte (100ms) frames immediately |
+| Mic → capture out  | ~100ms     | cpal+rubato sidecar; 3200-byte (100ms) s16le frames |
 | Frame → socket     | ~0         | send as soon as a frame fills; no batching          |
 | Socket             | tens of ms | `perMessageDeflate: false`                          |
 | Soniox provisional | 200–400ms  | server-side                                         |
-| Token → UI         | &lt;5ms    | one setState per message; fixed ~6-line render      |
+| Token → UI         | immediate  | token events paint without coalesce                 |
 
-Provisional text usually appears ~0.3–0.6s after speech; the server dominates.
+Provisional captions are the priority; finals may arrive later.
+Endpoint detection stays off so early finalization does not trade away word/diarization accuracy.
+Korean-primary bias: `language_hints: ["ko","en"]` + `language_hints_strict`, plus `context.general`
+and a rolling final-text tail on reconnect (same idea as desktop).
+Mic path matches desktop quality: **cpal + rubato FFT** resample to 16 kHz (not ffmpeg).
 
 ## Data flow
 
 ```text
 [hot]
-ffmpeg stdout ──3200B──▶ transcription ──sendAudio──▶ ws
+earpop-capture stdout ──3200B──▶ transcription ──sendAudio──▶ ws
 ws ──token JSON──▶ transcription ──snapshot──▶ caption (1× setState)
 
 [cold]
@@ -99,14 +103,14 @@ Storage locations for users are documented in the README. Architecturally:
 
 ## Stack choices (locked)
 
-| Role     | Choice                                                             |
-| -------- | ------------------------------------------------------------------ |
-| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7          |
-| Package  | pnpm; npm-compatible `prepublishOnly` (`tsup`)                     |
-| UI       | ink 7 + @inkjs/ui, React 19                                        |
-| WS       | `ws` (deflate off, `bufferedAmount`, binary control)               |
-| Mic      | ffmpeg avfoundation child; list via `-list_devices`                |
-| CLI args | raw `process.argv` (few commands)                                  |
-| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only |
+| Role     | Choice                                                                       |
+| -------- | ---------------------------------------------------------------------------- |
+| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7                    |
+| Package  | pnpm; npm-compatible `prepublishOnly` (mac capture binaries + `tsup`)        |
+| UI       | ink 7 + @inkjs/ui, React 19                                                  |
+| WS       | `ws` (deflate off, `bufferedAmount`, binary control)                         |
+| Mic      | Rust sidecar `earpop-capture` (cpal + rubato); macOS arm64/x64 in `vendor/`  |
+| CLI args | raw `process.argv` (few commands)                                            |
+| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** + **`vendor`** |
 
 Runtime deps: ink, @inkjs/ui, react, ws.
