@@ -1,5 +1,6 @@
 # Keep matrix package / rust_target / bin aligned with src/lib/capture-platforms.json
-# Runs on GitHub Actions (push tags v* or workflow_dispatch).
+# Tag v* → build all platforms → npm publish → GitHub Release (+ integrity commit on default branch).
+# workflow_dispatch → build + assemble only (no publish).
 name: Capture binaries
 
 on:
@@ -104,3 +105,91 @@ jobs:
         with:
           name: capture-npm-packages
           path: npm/
+
+  publish:
+    needs: assemble
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: capture-npm-packages
+          path: .
+
+      - name: Ensure executable bits
+        run: find npm -type f -path '*/bin/*' ! -name '.gitkeep' -exec chmod +x {} +
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches package.json
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [[ "$TAG" != "$PKG" ]]; then
+            echo "Tag v${TAG} does not match package.json version ${PKG}"
+            exit 1
+          fi
+          echo "Publishing ${PKG} from tag v${TAG}"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "Missing secret NPM_TOKEN (npm automation token with publish access)."
+            exit 1
+          fi
+          node scripts/publish-capture.mjs --publish
+
+      - name: npm version (no v prefix)
+        id: ver
+        run: echo "npm=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            ```bash
+            npm i -g earpop-cli@${{ steps.ver.outputs.npm }}
+            ```
+
+            Platform capture packages (`earpop-capture-*`) are published as matching optional dependencies.
+
+      - name: Commit integrity map to default branch
+        env:
+          INTEGRITY: src/lib/capture-integrity.json
+        run: |
+          set -euo pipefail
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          cp "$INTEGRITY" /tmp/capture-integrity.json
+          git fetch origin "$DEFAULT_BRANCH"
+          git checkout -B "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
+          cp /tmp/capture-integrity.json "$INTEGRITY"
+          if git diff --quiet -- "$INTEGRITY"; then
+            echo "Integrity map unchanged; skipping commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$INTEGRITY"
+          git commit -m "chore: capture integrity for ${GITHUB_REF_NAME}"
+          git push origin "HEAD:$DEFAULT_BRANCH"

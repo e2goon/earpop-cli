@@ -1,90 +1,51 @@
 # Contributing
 
-Git and review conventions for this repository. Follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Code style: [CONVENTIONS.md](./CONVENTIONS.md). Agent boundaries: [AGENTS.md](../AGENTS.md).
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Code style: [CONVENTIONS.md](./CONVENTIONS.md).
 
-**Remote:** **GitHub** as `origin` (`https://github.com/e2goon/earpop-cli.git`). Do not invent a `repository` URL in `package.json` unless publishing metadata needs it.
+**Remote:** GitHub `origin` (`https://github.com/e2goon/earpop-cli.git`). Do not invent a `repository` field in `package.json` unless needed for publish metadata.
 
 ## Commits
-
-Format:
 
 ```text
 <type>(<optional scope>)<!?>: <한글 설명>
 
 [optional 한글 body]
-
-[optional footer]
 ```
 
-Rules:
+- **type** / **scope**: English (`feat`, `fix`, `cli`, …)
+- **description** / **body**: Korean; subject ~72 chars when practical; no trailing period on subject
+- Breaking: `feat!:` / `fix!:` and/or `BREAKING CHANGE:` footer
+- No `Co-authored-by: Cursor` trailers
+- Commit only when the maintainer asks
 
-- **type** (required, English): see table below — keep as `feat`, `fix`, etc.
-- **scope** (optional, English): area of the change (`cli`, `auth`, `audio`, `docs`, …)
-- **description** (Korean): short summary of what changed; no trailing period; keep the subject line readable (~72 characters when practical)
-- **body** (Korean): explain **why** when the subject is not enough; blank line after the subject
-- **breaking change**: `feat!:` / `fix!:` and/or a `BREAKING CHANGE:` footer (token stays English; explanation may be Korean)
-- Do **not** add `Co-authored-by: Cursor <…>` trailers
+| Type | Use |
+| --- | --- |
+| `feat` | User-facing feature |
+| `fix` | Bug fix |
+| `docs` | Docs only |
+| `refactor` | No feature/fix |
+| `perf` | Performance |
+| `test` / `build` / `ci` / `chore` / `style` | As named |
 
-| Type       | Use for                                | SemVer (when releasing) |
-| ---------- | -------------------------------------- | ----------------------- |
-| `feat`     | User-facing feature                    | minor                   |
-| `fix`      | Bug fix                                | patch                   |
-| `docs`     | Documentation only                     | —                       |
-| `refactor` | Code change with no feature/fix        | —                       |
-| `perf`     | Performance improvement                | patch (often)           |
-| `test`     | Tests only                             | —                       |
-| `build`    | Build system or bundler                | —                       |
-| `ci`       | CI configuration                       | —                       |
-| `chore`    | Maintenance that does not affect users | —                       |
-| `style`    | Formatting only (no logic change)      | —                       |
+## Pull requests
 
-Examples:
-
-```text
-feat(cli): ink 호환을 위해 Node 24 이상 요구
-fix(auth): 현재 리전의 키체인 API 키 삭제
-docs: Node 24 요구사항 문서화
-chore(release): engines와 prepublishOnly 정렬
-feat!: Node 22 지원 제거
-```
-
-Do **not** commit unless the maintainer (or user, for agents) asked.
-
-## Pull requests (Cursor Origin)
-
-Open and merge PRs on **GitHub** (`gh pr` is fine when the human asks).
-
-**Title:** same as a commit subject — English `type` + Korean description. Prefer **squash merge**; the PR title becomes the history entry.
-
-**Body (Korean):**
+GitHub (`gh pr` when asked). Title = commit subject. Prefer squash merge.
 
 ```markdown
 ## Summary
-
 - …
 
 ## Test plan
-
 - [ ] …
-
-## Notes
-
-<!-- Optional: breaking changes, follow-ups -->
 ```
 
-1. **Summary** — 무엇을, 왜 바꿨는지 (1–3 bullets)
-2. **Test plan** — 검증 방법 체크리스트
-3. **Notes** (optional) — 브레이킹 변경, 후속 작업
+## Release
 
-Keep PRs focused and small when possible.
-
-## Local checks before review
+Repo secret `NPM_TOKEN`. Clean tree on `main`:
 
 ```bash
-pnpm check
-pnpm lint
-pnpm fmt:check
-pnpm build
+pnpm release          # patch; or: minor | major | 0.3.0
+pnpm release --dry-run
 ```
 
-Capture sidecar (optional): `pnpm capture:build`. Release packaging is documented in [ARCHITECTURE.md](./ARCHITECTURE.md) (GitHub Actions + `publish-capture.mjs`).
+CI on tag `v*` builds capture binaries, publishes, and opens the GitHub Release.
