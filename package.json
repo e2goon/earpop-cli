@@ -19,25 +19,22 @@
     "earpop": "./dist/index.js"
   },
   "files": [
-    "dist",
-    "vendor"
+    "dist"
   ],
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
     "dev": "tsx src/index.tsx",
     "build": "tsup",
-    "capture:build": "bash scripts/build-capture.sh host",
-    "capture:build:mac": "bash scripts/build-capture.sh mac",
-    "capture:build:win": "bash scripts/build-capture.sh win",
-    "capture:build:linux": "bash scripts/build-capture.sh linux",
-    "capture:build:release": "bash scripts/build-capture.sh release",
+    "capture:build": "bash scripts/build-capture.sh",
+    "capture:stage": "node scripts/stage-capture.mjs --host",
+    "capture:publish:check": "node scripts/publish-capture.mjs",
     "check": "tsc --noEmit",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "prepublishOnly": "bash scripts/build-capture.sh release && tsup"
+    "prepublishOnly": "tsup"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
@@ -54,6 +51,13 @@
     "tsup": "^8.5.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
+  },
+  "optionalDependencies": {
+    "earpop-capture-darwin-arm64": "workspace:*",
+    "earpop-capture-darwin-x64": "workspace:*",
+    "earpop-capture-linux-arm64": "workspace:*",
+    "earpop-capture-linux-x64": "workspace:*",
+    "earpop-capture-win32-x64": "workspace:*"
   },
   "engines": {
     "node": ">=24"

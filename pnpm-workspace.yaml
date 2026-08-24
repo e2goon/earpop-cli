@@ -1,4 +1,5 @@
-packages: []
+packages:
+  - "npm/*"
 
 # esbuild must prepare its binary at install time or tsup fails.
 onlyBuiltDependencies:

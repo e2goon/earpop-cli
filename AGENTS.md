@@ -27,19 +27,17 @@ Do not duplicate those docs here — follow the link for the topic.
 ## Tooling
 
 - Node **24+** (Active LTS), **pnpm** (`packageManager` in `package.json`)
-- Rust (**1.85+**) for the capture sidecar (`crates/earpop-capture`)
-- `pnpm capture:build` — build sidecar for this host (copies into `vendor/` on macOS/Windows/Linux)
-- `pnpm capture:build:mac` — `darwin-arm64` + `darwin-x64`
-- `pnpm capture:build:win` — `win32-x64` (native on Windows; `cargo-xwin` on macOS)
-- `pnpm capture:build:linux` — `linux-x64` + `linux-arm64` (native on Linux; **Docker** elsewhere)
-- `pnpm capture:build:release` — full vendor set (prefer **macOS** + Docker + `cargo-xwin`)
-- `pnpm dev` — run CLI via tsx (uses `target/release/earpop-capture` or `vendor/`)
-- `pnpm build` — **tsup** only → `dist/` (does **not** build capture binaries; keep tsup unless there is a concrete need; do not switch to Rolldown/`tsdown` for speed alone)
-- `prepublishOnly` — `capture:build:release` + **tsup**; prefer **macOS** so Darwin + Windows + Linux binaries are produced (`vendor/` + `dist/`)
+- Rust (**1.85+**) for the capture sidecar (`crates/earpop-capture`) — **host build only** for local work
+- `pnpm capture:build` — `cargo build --release` + stage into `npm/earpop-capture-<platform>/bin/`
+- `pnpm capture:stage` — stage an already-built binary for this host
+- `pnpm capture:publish:check` — verify staged binaries + sync versions (add `--` / run `node scripts/publish-capture.mjs --publish` to publish)
+- `pnpm dev` — run CLI via tsx (prefers `target/release`, then optional/workspace capture package)
+- `pnpm build` / `prepublishOnly` — **tsup** → `dist/` only (capture binaries come from CI + platform packages)
+- Capture release matrix: [`.github/workflows/capture.yml`](./.github/workflows/capture.yml) (native runners per OS/arch)
 - `pnpm check` — `tsc --noEmit`
 - `pnpm lint` / `lint:fix` — Oxlint
 - `pnpm fmt` / `fmt:check` — Oxfmt
-- Publish surface: `bin.earpop` → `dist/index.js`; npm `files`: **`dist`** + **`vendor`** (`LICENSE` / `README` included by npm)
+- Publish surface: `bin.earpop` → `dist/index.js`; npm `files`: **`dist`**; capture via **`optionalDependencies`** (`earpop-capture-*`)
 
 ## Layout (where to edit)
 
@@ -54,8 +52,11 @@ src/
 crates/
   earpop-capture/  # cpal+rubato sidecar → 16 kHz mono PCM stdout
 
+npm/
+  earpop-capture-*/  # one binary per os/cpu (staged by build/CI; published separately)
+
 docs/           # CONVENTIONS, CONTRIBUTING, ARCHITECTURE (not user-facing npm docs)
 ```
 
 Import alias: `#/*` → `src/*` (tsconfig + tsup).
-`vendor/` and `target/` are gitignored; publish builds binaries into `vendor/` via `prepublishOnly`.
+Binaries under `npm/*/bin/` (except `.gitkeep`) and `target/` are gitignored; CI stages them for release.

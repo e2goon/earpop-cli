@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +8,35 @@ const CAPTURE_MISSING =
 
 const PLATFORM_UNSUPPORTED =
   "Live microphone capture requires macOS, Windows, or Linux. Listing and exporting transcripts still work on this platform.";
+
+/** Platform package + binary name for the current Node runtime. */
+function platformCapture() {
+  if (process.platform === "darwin") {
+    if (process.arch === "arm64") {
+      return { package: "earpop-capture-darwin-arm64", bin: "earpop-capture" };
+    }
+    if (process.arch === "x64") {
+      return { package: "earpop-capture-darwin-x64", bin: "earpop-capture" };
+    }
+    return null;
+  }
+  if (process.platform === "win32") {
+    if (process.arch === "x64") {
+      return { package: "earpop-capture-win32-x64", bin: "earpop-capture.exe" };
+    }
+    return null;
+  }
+  if (process.platform === "linux") {
+    if (process.arch === "x64") {
+      return { package: "earpop-capture-linux-x64", bin: "earpop-capture" };
+    }
+    if (process.arch === "arm64") {
+      return { package: "earpop-capture-linux-arm64", bin: "earpop-capture" };
+    }
+    return null;
+  }
+  return null;
+}
 
 function looksLikePackageRoot(dir: string) {
   if (existsSync(join(dir, "Cargo.toml")) && existsSync(join(dir, "crates"))) {
@@ -23,7 +53,6 @@ function looksLikePackageRoot(dir: string) {
 }
 
 function packageRoot() {
-  // tsx loads src/lib/; tsup bundles to dist/; npm installs both next to vendor/.
   let dir = dirname(fileURLToPath(import.meta.url));
   while (!looksLikePackageRoot(dir)) {
     const parent = dirname(dir);
@@ -37,23 +66,22 @@ function releaseBinName() {
   return process.platform === "win32" ? "earpop-capture.exe" : "earpop-capture";
 }
 
-function vendorName() {
-  if (process.platform === "darwin") {
-    if (process.arch === "arm64") return "earpop-capture-darwin-arm64";
-    if (process.arch === "x64") return "earpop-capture-darwin-x64";
-    return null;
-  }
-  if (process.platform === "win32") {
-    if (process.arch === "x64") return "earpop-capture-win32-x64.exe";
-    if (process.arch === "arm64") return "earpop-capture-win32-arm64.exe";
-    return null;
-  }
-  if (process.platform === "linux") {
-    if (process.arch === "x64") return "earpop-capture-linux-x64";
-    if (process.arch === "arm64") return "earpop-capture-linux-arm64";
-    return null;
+function resolveOptionalPackageBin({ package: pkgName, bin }: { package: string; bin: string }) {
+  try {
+    // Resolve from package root so tsx (src/) and tsup (dist/) both work.
+    const require = createRequire(join(packageRoot(), "package.json"));
+    const pkgJson = require.resolve(`${pkgName}/package.json`);
+    const path = join(dirname(pkgJson), "bin", bin);
+    if (existsSync(path)) return path;
+  } catch {
+    // optionalDependency not installed for this platform / ignored
   }
   return null;
+}
+
+function resolveWorkspaceBin({ package: pkgName, bin }: { package: string; bin: string }) {
+  const path = join(packageRoot(), "npm", pkgName, "bin", bin);
+  return existsSync(path) ? path : null;
 }
 
 /** Absolute path to the capture sidecar, or a user-facing error string. */
@@ -72,14 +100,19 @@ export function resolveCaptureBin() {
     return { ok: true as const, path: release };
   }
 
-  const name = vendorName();
-  if (name === null) {
+  const platform = platformCapture();
+  if (platform === null) {
     return { ok: false as const, message: PLATFORM_UNSUPPORTED };
   }
 
-  const vendor = join(root, "vendor", name);
-  if (existsSync(vendor)) {
-    return { ok: true as const, path: vendor };
+  const fromOptional = resolveOptionalPackageBin(platform);
+  if (fromOptional) {
+    return { ok: true as const, path: fromOptional };
+  }
+
+  const fromWorkspace = resolveWorkspaceBin(platform);
+  if (fromWorkspace) {
+    return { ok: true as const, path: fromWorkspace };
   }
 
   return { ok: false as const, message: CAPTURE_MISSING };

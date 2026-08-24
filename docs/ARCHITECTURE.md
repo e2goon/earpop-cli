@@ -103,14 +103,14 @@ Storage locations for users are documented in the README. Architecturally:
 
 ## Stack choices (locked)
 
-| Role     | Choice                                                                              |
-| -------- | ----------------------------------------------------------------------------------- |
-| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7                           |
-| Package  | pnpm; `prepublishOnly` builds macOS + Windows + Linux capture binaries + `tsup`     |
-| UI       | ink 7 + @inkjs/ui, React 19                                                         |
-| WS       | `ws` (deflate off, `bufferedAmount`, binary control)                                |
-| Mic      | Rust sidecar `earpop-capture` (cpal + rubato); macOS / Windows / Linux in `vendor/` |
-| CLI args | raw `process.argv` (few commands)                                                   |
-| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** + **`vendor`**        |
+| Role     | Choice                                                                        |
+| -------- | ----------------------------------------------------------------------------- |
+| Runtime  | Node.js **24+** (Active LTS); matches `engines` and ink 7                     |
+| Package  | pnpm; `prepublishOnly` = `tsup`; capture via `optionalDependencies`           |
+| UI       | ink 7 + @inkjs/ui, React 19                                                   |
+| WS       | `ws` (deflate off, `bufferedAmount`, binary control)                          |
+| Mic      | Rust sidecar; per-platform npm packages `earpop-capture-*` (CI native matrix) |
+| CLI args | raw `process.argv` (few commands)                                             |
+| Bundle   | tsup ESM + shebang → `dist/index.js`; npm `files`: **`dist`** only            |
 
 Runtime deps: ink, @inkjs/ui, react, ws.

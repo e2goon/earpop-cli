@@ -5,3 +5,5 @@ scratchpad/
 .cursor/
 target/
 vendor/
+npm/*/bin/earpop-capture
+npm/*/bin/earpop-capture.exe

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Runs inside the Rust Linux container. Args: <vendor-out-name>
+# Optional: build Linux vendor binaries in Docker (local emergency; prefer CI).
 set -euo pipefail
 
-export PATH="/usr/local/cargo/bin:${PATH:-}"
-
 OUT_NAME="${1:?vendor output name required}"
+
+export PATH="/usr/local/cargo/bin:${PATH:-}"
 
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libasound2-dev pkg-config >/dev/null
