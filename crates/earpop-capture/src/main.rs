@@ -14,8 +14,6 @@ use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamConfig};
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Resampler};
 use serde::Serialize;
-use signal_hook::consts::{SIGINT, SIGTERM};
-use signal_hook::flag;
 
 const SAMPLE_RATE: usize = 16_000;
 /// ~21 ms at 48 kHz — rubato input chunk.
@@ -128,8 +126,11 @@ fn pick_device(wanted: Option<&str>) -> Result<cpal::Device, String> {
 
 fn cmd_capture(wanted: Option<String>) -> Result<(), String> {
     let stop = Arc::new(AtomicBool::new(false));
-    flag::register(SIGTERM, Arc::clone(&stop)).map_err(text)?;
-    flag::register(SIGINT, Arc::clone(&stop)).map_err(text)?;
+    // ctrlc: SIGINT/SIGTERM on Unix; Ctrl+C on Windows (Node SIGTERM often force-kills).
+    {
+        let stop = Arc::clone(&stop);
+        ctrlc::set_handler(move || stop.store(true, Ordering::Relaxed)).map_err(text)?;
+    }
 
     let device = pick_device(wanted.as_deref())?;
     let supported = device.default_input_config().map_err(text)?;
@@ -160,8 +161,8 @@ fn cmd_capture(wanted: Option<String>) -> Result<(), String> {
                 Ok(()) => {
                     let _ = stdout.flush();
                 }
-                // Node closed the pipe — clean stop.
-                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => break,
+                // Node closed the pipe — clean stop (BrokenPipe; Windows may use 232).
+                Err(e) if is_pipe_closed(&e) => break,
                 Err(e) => return Err(text(e)),
             },
             Ok(Event::Error(message)) => return Err(message),
@@ -172,6 +173,14 @@ fn cmd_capture(wanted: Option<String>) -> Result<(), String> {
 
     drop(stream);
     Ok(())
+}
+
+fn is_pipe_closed(error: &io::Error) -> bool {
+    if error.kind() == io::ErrorKind::BrokenPipe {
+        return true;
+    }
+    // Windows ERROR_NO_DATA / broken pipe variants when the reader went away.
+    matches!(error.raw_os_error(), Some(232) | Some(109))
 }
 
 fn write_pcm(out: &mut impl Write, frame: &[i16]) -> io::Result<()> {

@@ -9,9 +9,22 @@ const FRAME_BYTES = 3200;
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
 const TERM_GRACE_MS = 2_000;
 
+function micPermissionHint() {
+  if (process.platform === "darwin") {
+    return "allow this terminal app under System Settings > Privacy & Security > Microphone";
+  }
+  if (process.platform === "win32") {
+    return "allow microphone access in Windows Settings > Privacy & security > Microphone";
+  }
+  if (process.platform === "linux") {
+    return "check microphone permissions and that ALSA/PipeWire can open the device";
+  }
+  return "check microphone permissions";
+}
+
 function captureErrorMessage({ code, stderr }: { code: number | null; stderr: string }) {
   const detail = stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${code ?? "unknown"}`;
-  return `Cannot use microphone: ${detail} — allow this terminal app under System Settings > Privacy & Security > Microphone`;
+  return `Cannot use microphone: ${detail} — ${micPermissionHint()}`;
 }
 
 function stopProcess({ child, markStopped }: { child: ChildProcess; markStopped: () => void }) {

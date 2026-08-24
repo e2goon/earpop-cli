@@ -5,7 +5,7 @@ Live speech-to-text in the terminal via Soniox realtime STT. The binary name is 
 ## Requirements
 
 - **Node.js** 24+ (Active LTS)
-- **macOS** for live microphone capture (bundled `earpop-capture` helper; no ffmpeg)
+- **macOS, Windows, or Linux** for live microphone capture (bundled `earpop-capture` helper; no ffmpeg)
 - **Soniox API key** from [Soniox](https://soniox.com). The key’s project region (`us` / `eu` / `jp`) must match the CLI region.
 
 ## Install
@@ -60,7 +60,13 @@ Transcript files:
 
 ## Platform notes
 
-Live mic listing and capture use a bundled **cpal + rubato** sidecar (`earpop-capture`) on **macOS** (arm64 / x64). On Linux/Windows, listing/exporting transcripts and storing keys may work, but live mic capture is not supported yet.
+Live mic listing and capture use a bundled **cpal + rubato** sidecar (`earpop-capture`) on:
+
+- **macOS** — arm64 / x64
+- **Windows** — x64
+- **Linux** — x64 / arm64 (ALSA)
+
+Listing/exporting transcripts and storing keys work without the capture helper.
 
 ## License
 

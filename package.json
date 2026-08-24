@@ -29,12 +29,15 @@
     "build": "tsup",
     "capture:build": "bash scripts/build-capture.sh host",
     "capture:build:mac": "bash scripts/build-capture.sh mac",
+    "capture:build:win": "bash scripts/build-capture.sh win",
+    "capture:build:linux": "bash scripts/build-capture.sh linux",
+    "capture:build:release": "bash scripts/build-capture.sh release",
     "check": "tsc --noEmit",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "prepublishOnly": "bash scripts/build-capture.sh mac && tsup"
+    "prepublishOnly": "bash scripts/build-capture.sh release && tsup"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",

@@ -6,7 +6,7 @@ const CAPTURE_MISSING =
   "Microphone capture helper is missing. Run `pnpm capture:build` (dev) or reinstall earpop-cli.";
 
 const PLATFORM_UNSUPPORTED =
-  "Live microphone capture requires macOS. Listing and exporting transcripts still work on this platform.";
+  "Live microphone capture requires macOS, Windows, or Linux. Listing and exporting transcripts still work on this platform.";
 
 function looksLikePackageRoot(dir: string) {
   if (existsSync(join(dir, "Cargo.toml")) && existsSync(join(dir, "crates"))) {
@@ -33,10 +33,26 @@ function packageRoot() {
   return dir;
 }
 
+function releaseBinName() {
+  return process.platform === "win32" ? "earpop-capture.exe" : "earpop-capture";
+}
+
 function vendorName() {
-  if (process.platform !== "darwin") return null;
-  if (process.arch === "arm64") return "earpop-capture-darwin-arm64";
-  if (process.arch === "x64") return "earpop-capture-darwin-x64";
+  if (process.platform === "darwin") {
+    if (process.arch === "arm64") return "earpop-capture-darwin-arm64";
+    if (process.arch === "x64") return "earpop-capture-darwin-x64";
+    return null;
+  }
+  if (process.platform === "win32") {
+    if (process.arch === "x64") return "earpop-capture-win32-x64.exe";
+    if (process.arch === "arm64") return "earpop-capture-win32-arm64.exe";
+    return null;
+  }
+  if (process.platform === "linux") {
+    if (process.arch === "x64") return "earpop-capture-linux-x64";
+    if (process.arch === "arm64") return "earpop-capture-linux-arm64";
+    return null;
+  }
   return null;
 }
 
@@ -51,7 +67,7 @@ export function resolveCaptureBin() {
   }
 
   const root = packageRoot();
-  const release = join(root, "target", "release", "earpop-capture");
+  const release = join(root, "target", "release", releaseBinName());
   if (existsSync(release)) {
     return { ok: true as const, path: release };
   }

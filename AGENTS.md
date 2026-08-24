@@ -28,11 +28,14 @@ Do not duplicate those docs here — follow the link for the topic.
 
 - Node **24+** (Active LTS), **pnpm** (`packageManager` in `package.json`)
 - Rust (**1.85+**) for the capture sidecar (`crates/earpop-capture`)
-- `pnpm capture:build` — build sidecar for this host (also copies into `vendor/` on macOS)
-- `pnpm capture:build:mac` — build `darwin-arm64` + `darwin-x64` into `vendor/`
+- `pnpm capture:build` — build sidecar for this host (copies into `vendor/` on macOS/Windows/Linux)
+- `pnpm capture:build:mac` — `darwin-arm64` + `darwin-x64`
+- `pnpm capture:build:win` — `win32-x64` (native on Windows; `cargo-xwin` on macOS)
+- `pnpm capture:build:linux` — `linux-x64` + `linux-arm64` (native on Linux; **Docker** elsewhere)
+- `pnpm capture:build:release` — full vendor set (prefer **macOS** + Docker + `cargo-xwin`)
 - `pnpm dev` — run CLI via tsx (uses `target/release/earpop-capture` or `vendor/`)
 - `pnpm build` — **tsup** only → `dist/` (does **not** build capture binaries; keep tsup unless there is a concrete need; do not switch to Rolldown/`tsdown` for speed alone)
-- `prepublishOnly` — `capture:build:mac` + **tsup**; must run on **macOS** when publishing a package that ships live capture (`vendor/` + `dist/`)
+- `prepublishOnly` — `capture:build:release` + **tsup**; prefer **macOS** so Darwin + Windows + Linux binaries are produced (`vendor/` + `dist/`)
 - `pnpm check` — `tsc --noEmit`
 - `pnpm lint` / `lint:fix` — Oxlint
 - `pnpm fmt` / `fmt:check` — Oxfmt
