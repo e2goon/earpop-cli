@@ -26,7 +26,7 @@
   "scripts": {
     "dev": "tsx src/index.tsx",
     "build": "tsup",
-    "capture:build": "bash scripts/build-capture.sh",
+    "capture:build": "node scripts/build-capture.mjs",
     "capture:stage": "node scripts/stage-capture.mjs --host",
     "capture:publish:check": "node scripts/publish-capture.mjs",
     "check": "tsc --noEmit",

@@ -28,12 +28,12 @@ Do not duplicate those docs here — follow the link for the topic.
 
 - Node **24+** (Active LTS), **pnpm** (`packageManager` in `package.json`)
 - Rust (**1.85+**) for the capture sidecar (`crates/earpop-capture`) — **host build only** for local work
-- `pnpm capture:build` — `cargo build --release` + stage into `npm/earpop-capture-<platform>/bin/`
+- `pnpm capture:build` — Node script: `cargo build --release` + stage into `npm/earpop-capture-<platform>/bin/` (PowerShell / cmd OK; no bash/Docker)
 - `pnpm capture:stage` — stage an already-built binary for this host
-- `pnpm capture:publish:check` — verify staged binaries + sync versions (add `--` / run `node scripts/publish-capture.mjs --publish` to publish)
+- `pnpm capture:publish:check` — verify staged binaries (use `node scripts/publish-capture.mjs --publish` to publish)
 - `pnpm dev` — run CLI via tsx (prefers `target/release`, then optional/workspace capture package)
 - `pnpm build` / `prepublishOnly` — **tsup** → `dist/` only (capture binaries come from CI + platform packages)
-- Capture release matrix: [`.github/workflows/capture.yml`](./.github/workflows/capture.yml) (native runners per OS/arch)
+- Capture release matrix: [`.github/workflows/capture.yml`](./.github/workflows/capture.yml) (native runners; no local Docker)
 - `pnpm check` — `tsc --noEmit`
 - `pnpm lint` / `lint:fix` — Oxlint
 - `pnpm fmt` / `fmt:check` — Oxfmt
