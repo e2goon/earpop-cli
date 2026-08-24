@@ -92,8 +92,17 @@ function buildSegments({
   pendingTokens: Token[];
 }) {
   const segments: Segment[] = [];
+  // Temporary: show diarization labels so ambient TV vs near-mic speech can be compared.
+  let lastSpeaker: string | undefined;
 
   const push = ({ token, dim }: { token: Token; dim: boolean }) => {
+    if (token.speaker !== undefined && token.speaker !== lastSpeaker) {
+      segments.push({
+        text: lastSpeaker === undefined ? `[S${token.speaker}] ` : ` [S${token.speaker}] `,
+        dim,
+      });
+      lastSpeaker = token.speaker;
+    }
     segments.push({ text: token.text, dim });
   };
 
