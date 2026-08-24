@@ -33,8 +33,9 @@ Do not duplicate those docs here — follow the link for the topic.
 - `pnpm capture:publish:check` — verify staged binaries (`--all` / `--publish` via `node scripts/publish-capture.mjs`)
 - `pnpm dev` — tsx; prefers `target/release`, then optional/workspace capture package
 - `pnpm build` / `prepublishOnly` — **tsup** → `dist/` (capture binaries are separate platform packages)
-- Capture release: [`.github/workflows/capture.yml`](./.github/workflows/capture.yml) native matrix → stage → `publish-capture.mjs --publish`
-- Platform list source of truth: [`src/lib/capture-platforms.json`](./src/lib/capture-platforms.json) (keep CI matrix in sync)
+- Capture release: [`.depot/workflows/capture.yml`](./.depot/workflows/capture.yml) via **Depot CI on Cursor Origin** (not GitHub Actions). Install Depot from the Origin repo **Apps** tab, then `v*` tag / `workflow_dispatch` on `origin`.
+- Do **not** push release tags to the `github` remote for CI; Origin + Depot only.
+- Platform list source of truth: [`src/lib/capture-platforms.json`](./src/lib/capture-platforms.json) (keep Depot matrix in sync)
 - Integrity: [`src/lib/capture-integrity.json`](./src/lib/capture-integrity.json) SHA-256 map written on publish; `EARPOP_SKIP_CAPTURE_INTEGRITY=1` for local staged bins when hashes are set
 - `pnpm check` / `lint` / `fmt` — tsc, Oxlint, Oxfmt
 - Publish surface: `bin.earpop` → `dist/index.js`; npm `files`: **`dist`**; mic via **`optionalDependencies`** (`earpop-capture-*`)
@@ -58,6 +59,8 @@ npm/
 scripts/        # build-capture / stage-capture / publish-capture (Node, no bash/Docker)
 
 docs/           # CONVENTIONS, CONTRIBUTING, ARCHITECTURE
+
+.depot/workflows/  # Depot CI (Cursor Origin)
 ```
 
 Import alias: `#/*` → `src/*` (tsconfig + tsup).

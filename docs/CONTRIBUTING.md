@@ -87,4 +87,4 @@ pnpm fmt:check
 pnpm build
 ```
 
-Capture sidecar (optional): `pnpm capture:build`. Release packaging is documented in [ARCHITECTURE.md](./ARCHITECTURE.md) (CI matrix + `publish-capture.mjs`).
+Capture sidecar (optional): `pnpm capture:build`. Release packaging is documented in [ARCHITECTURE.md](./ARCHITECTURE.md) (Depot CI on Origin + `publish-capture.mjs`).

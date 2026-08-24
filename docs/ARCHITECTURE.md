@@ -51,14 +51,14 @@ Repo:
   src/lib/capture-integrity.json   # SHA-256 per package (filled on publish)
   npm/earpop-capture-*/            # platform package shells + staged bin/
   crates/earpop-capture/           # Rust sidecar source
-  .github/workflows/capture.yml    # native CI matrix (keep aligned with platforms JSON)
+  .depot/workflows/capture.yml     # Depot CI on Cursor Origin (native matrix; keep aligned with platforms JSON)
 ```
 
 Resolve order (`capture-bin.ts`): `EARPOP_CAPTURE_BIN` → `target/release` → optional npm package → workspace `npm/*/bin`.
 Published optional packages are SHA-256 checked when the integrity map is non-empty.
 Sidecar processes get a **minimal env** (no API keys); see `capture-process.ts`.
 
-Local: `pnpm capture:build` (host only). Release: CI builds each OS natively → stage → `publish-capture.mjs --publish` (platform packages first, then root).
+Local: `pnpm capture:build` (host only). Release: Depot CI (Origin) builds each OS natively → stage → `publish-capture.mjs --publish` (platform packages first, then root). GitHub Actions is not used.
 
 ## Latency budget
 

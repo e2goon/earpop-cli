@@ -1,6 +1,7 @@
-name: Capture binaries
-
+# Depot CI workflow for Cursor Origin (not GitHub Actions).
+# Connect Depot from the Origin repo Apps tab, then push to origin.cursor.com.
 # Keep matrix package / rust_target / bin aligned with src/lib/capture-platforms.json
+name: Capture binaries
 
 on:
   push:
@@ -81,8 +82,6 @@ jobs:
           path: npm/${{ matrix.package }}/bin/${{ matrix.bin }}
           if-no-files-found: error
 
-  # Assemble artifacts for a maintainer to run `node scripts/publish-capture.mjs --publish`
-  # after downloading, or wire a trusted publish job with NPM_TOKEN later.
   assemble:
     needs: build
     runs-on: ubuntu-latest
