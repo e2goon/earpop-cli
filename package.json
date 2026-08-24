@@ -28,7 +28,7 @@
     "build": "tsup",
     "capture:build": "node scripts/build-capture.mjs",
     "capture:stage": "node scripts/stage-capture.mjs --host",
-    "capture:publish:check": "node scripts/publish-capture.mjs",
+    "capture:check": "node scripts/publish-capture.mjs",
     "release": "node scripts/release.mjs",
     "check": "tsc --noEmit",
     "lint": "oxlint",

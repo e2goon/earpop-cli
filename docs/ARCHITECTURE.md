@@ -58,7 +58,7 @@ Resolve order (`capture-bin.ts`): `EARPOP_CAPTURE_BIN` → `target/release` → 
 Published optional packages are SHA-256 checked when the integrity map is non-empty.
 Sidecar processes get a **minimal env** (no API keys); see `capture-process.ts`.
 
-Local: `pnpm capture:build` (host only). Release: `pnpm release` (or push tag `v*` matching `package.json`) → GitHub Actions native matrix → assemble → `publish-capture.mjs --publish` in CI (`NPM_TOKEN`; platform packages first, then root, with npm provenance) → GitHub Release → commit updated `capture-integrity.json` to the default branch. `workflow_dispatch` builds artifacts only.
+Local: `pnpm capture:build` (host only). Release: `pnpm release` → tag `v*` → Actions matrix → CI `publish-capture.mjs --publish` (`NPM_TOKEN`) → GitHub Release → integrity commit on default branch. `workflow_dispatch` builds only.
 
 ## Latency budget
 

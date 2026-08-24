@@ -50,9 +50,9 @@ feat!: Node 22 지원 제거
 
 Do **not** commit unless the maintainer (or user, for agents) asked.
 
-## Pull requests (Cursor Origin)
+## Pull requests
 
-Open and merge PRs on **GitHub** (`gh pr` is fine when the human asks).
+Open and merge PRs on **GitHub** (`gh pr` when the human asks).
 
 **Title:** same as a commit subject — English `type` + Korean description. Prefer **squash merge**; the PR title becomes the history entry.
 
@@ -91,17 +91,12 @@ Capture sidecar (optional): `pnpm capture:build`. Release packaging is documente
 
 ## Release (npm + GitHub)
 
-On a clean tree (usually `main`), after `NPM_TOKEN` is set in repo secrets:
+Repo secret **`NPM_TOKEN`** required. On a clean tree (usually `main`):
 
 ```bash
-pnpm release          # patch (0.2.0 → 0.2.1)
-pnpm release minor    # 0.2.0 → 0.3.0
-pnpm release major    # 0.2.0 → 1.0.0
-pnpm release 0.3.0    # exact version
+pnpm release          # patch
+pnpm release minor    # or major, or 0.3.0
 pnpm release --dry-run
-pnpm release --no-push   # commit + tag only
 ```
 
-`pnpm release` bumps root + `npm/earpop-capture-*/package.json`, commits `chore: x.y.z`, tags `vx.y.z`, and pushes commit + tag. Actions then builds, publishes, and opens the GitHub Release.
-
-Manual publish (`node scripts/publish-capture.mjs --publish`) is for debugging only when CI cannot run.
+Bumps versions, commits `chore: x.y.z`, tags `vx.y.z`, pushes. Actions builds, publishes, and opens the GitHub Release.
