@@ -46,7 +46,7 @@ export interface CaptionScreenProps {
   onSettingsDeleteApiKey: () => void;
 }
 
-const CAPTION_LINE_COUNT = 4;
+const CAPTION_LINE_COUNT = 6;
 const CAPTION_TAIL_CHARS = 1200;
 const FALLBACK_COLUMNS = 80;
 
@@ -65,16 +65,17 @@ const SPEAKER_COLORS = [
 
 type SpeakerColor = (typeof SPEAKER_COLORS)[number];
 
-interface Segment {
-  text: string;
-  dim?: boolean;
-  color?: SpeakerColor;
+interface Utterance {
+  speaker?: string;
+  stable: string;
+  pending: string;
 }
 
 interface Piece {
   text: string;
   dim: boolean;
   color?: SpeakerColor;
+  tag?: boolean;
 }
 
 function speakerColor(speaker: string): SpeakerColor | undefined {
@@ -132,15 +133,22 @@ function heardSpeakerIds(tokens: Token[]) {
   return [...heard].sort((a, b) => Number(a) - Number(b));
 }
 
-function hasCaptionText(segments: Segment[]) {
-  return segments.some((segment) => segment.color === undefined && segment.text.length > 0);
-}
-
 function formatSpeakerIds(ids: string[]) {
   return ids.map((id) => `S${id}`).join(", ");
 }
 
-function buildSegments({
+function endsSentence(text: string) {
+  const trimmed = text.trimEnd();
+  if (trimmed === "") return false;
+
+  const last = trimmed.at(-1) ?? "";
+  if ("?!。？！".includes(last)) return true;
+
+  // "1." / "Dr." stay on this line; a period only ends a sentence when the token has trailing space.
+  return last === "." && text !== trimmed;
+}
+
+function toLines({
   finalTokens,
   pendingTokens,
   focusedSpeakers,
@@ -149,21 +157,30 @@ function buildSegments({
   pendingTokens: Token[];
   focusedSpeakers: ReadonlySet<string>;
 }) {
-  const segments: Segment[] = [];
-  let lastSpeaker: string | undefined;
+  const lines: Utterance[] = [];
+  let speaker: string | undefined;
+  let stable = "";
+  let tail = "";
+  let closed = false;
 
-  const push = ({ token, dim }: { token: Token; dim: boolean }) => {
+  const push = () => {
+    if (stable.trim() === "" && tail.trim() === "") return;
+    lines.push({ speaker, stable, pending: tail });
+    stable = "";
+    tail = "";
+    closed = false;
+  };
+
+  const eat = ({ token, pending }: { token: Token; pending: boolean }) => {
     if (!speakerAllowed({ speaker: token.speaker, focusedSpeakers })) return;
-    if (token.speaker !== undefined && token.speaker !== lastSpeaker) {
-      const color = speakerColor(token.speaker);
-      segments.push({
-        text: lastSpeaker === undefined ? `[S${token.speaker}] ` : ` [S${token.speaker}] `,
-        dim,
-        ...(color !== undefined ? { color } : {}),
-      });
-      lastSpeaker = token.speaker;
+    const next = token.speaker;
+    if ((closed || (next !== undefined && next !== speaker)) && (stable !== "" || tail !== "")) {
+      push();
     }
-    segments.push({ text: token.text, dim });
+    if (next !== undefined) speaker = next;
+    if (pending) tail += token.text;
+    else stable += token.text;
+    closed = endsSentence(token.text);
   };
 
   const finalTail: Token[] = [];
@@ -173,24 +190,30 @@ function buildSegments({
     used += finalTokens[i]!.text.length;
   }
   for (const token of finalTail) {
-    push({ token, dim: false });
+    eat({ token, pending: false });
   }
   for (const token of pendingTokens) {
-    push({ token, dim: true });
+    eat({ token, pending: true });
   }
-
-  return segments;
+  push();
+  return lines;
 }
 
-function wrapSegments({ segments, width }: { segments: Segment[]; width: number }) {
+function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; indent: number }) {
   const lines: Piece[][] = [];
   let line: Piece[] = [];
   let lineWidth = 0;
 
-  const newLine = () => {
-    if (line.length > 0) lines.push(line);
+  const padOnly = () => indent > 0 && line.length === 1 && line[0]!.text.trim() === "";
+
+  const newLine = (continuation: boolean) => {
+    if (line.length > 0 && !padOnly()) lines.push(line);
     line = [];
     lineWidth = 0;
+    if (continuation && indent > 0) {
+      line.push({ text: " ".repeat(indent), dim: false });
+      lineWidth = indent;
+    }
   };
 
   const appendPiece = (piece: Piece) => {
@@ -208,43 +231,134 @@ function wrapSegments({ segments, width }: { segments: Segment[]; width: number 
     color?: SpeakerColor;
   }) => {
     if (text.length === 0) return;
-    appendPiece({ text, dim, color });
+    appendPiece({ text, dim, ...(color !== undefined ? { color } : {}) });
   };
 
-  for (const segment of segments) {
-    const units = segment.text.match(/\s+|\S+/g) ?? [];
+  const atLineStart = () => {
+    const last = line.at(-1);
+    return lineWidth === 0 || padOnly() || last?.tag === true;
+  };
+
+  for (const piece of pieces) {
+    if (piece.tag === true) {
+      appendPiece(piece);
+      continue;
+    }
+
+    const units = piece.text.match(/\s+|\S+/g) ?? [];
     for (const unit of units) {
+      if (/^\s+$/.test(unit) && atLineStart()) continue;
+
       const unitWidth = stringWidth(unit);
 
       if (unitWidth > width) {
-        newLine();
+        newLine(true);
         let chunk = "";
         let chunkWidth = 0;
         for (const char of unit) {
           const charWidthValue = charWidth(char.codePointAt(0) ?? 0);
           if (lineWidth + chunkWidth + charWidthValue > width) {
-            appendText({ text: chunk, dim: segment.dim ?? false, color: segment.color });
-            newLine();
+            appendText({ text: chunk, dim: piece.dim, color: piece.color });
+            newLine(true);
             chunk = "";
             chunkWidth = 0;
           }
           chunk += char;
           chunkWidth += charWidthValue;
         }
-        appendText({ text: chunk, dim: segment.dim ?? false, color: segment.color });
+        appendText({ text: chunk, dim: piece.dim, color: piece.color });
         continue;
       }
 
       if (lineWidth + unitWidth > width) {
-        newLine();
+        newLine(true);
         if (/^\s+$/.test(unit)) continue;
       }
-      appendText({ text: unit, dim: segment.dim ?? false, color: segment.color });
+      appendText({ text: unit, dim: piece.dim, color: piece.color });
     }
   }
-  newLine();
+  newLine(false);
+  return lines;
+}
 
-  return lines.slice(-CAPTION_LINE_COUNT);
+function wrapUtterances({
+  utterances,
+  width,
+  maxLines,
+}: {
+  utterances: Utterance[];
+  width: number;
+  maxLines: number;
+}) {
+  const rows: { pieces: Piece[]; tag?: Piece }[] = [];
+
+  for (const utterance of utterances) {
+    const pieces: Piece[] = [];
+    let tag: Piece | undefined;
+    let indent = 0;
+    if (utterance.speaker !== undefined) {
+      const color = speakerColor(utterance.speaker);
+      tag = {
+        text: `[S${utterance.speaker}] `,
+        dim: false,
+        tag: true,
+        ...(color !== undefined ? { color } : {}),
+      };
+      indent = stringWidth(tag.text);
+      pieces.push(tag);
+    }
+    const stable = utterance.stable.trimStart();
+    const pending = stable.length === 0 ? utterance.pending.trimStart() : utterance.pending;
+    if (stable.length > 0) pieces.push({ text: stable, dim: false });
+    if (pending.length > 0) pieces.push({ text: pending, dim: true });
+
+    for (const wrapped of wrapFlow({ pieces, width, indent })) {
+      rows.push({ pieces: wrapped, tag });
+    }
+  }
+
+  const kept = rows.slice(-maxLines);
+  if (kept.length === 0) return [];
+
+  const first = kept[0]!;
+  if (first.tag === undefined || first.pieces[0]?.tag === true) {
+    return kept.map((row) => row.pieces);
+  }
+
+  const tagWidth = stringWidth(first.tag.text);
+  const bodyWidth = width - tagWidth;
+  if (bodyWidth <= 0) return [[first.tag], ...kept.slice(1).map((row) => row.pieces)];
+
+  const source =
+    first.pieces[0] !== undefined && /^\s+$/.test(first.pieces[0].text)
+      ? first.pieces.slice(1)
+      : first.pieces;
+  const body: Piece[] = [];
+  let remaining = bodyWidth;
+  for (let i = source.length - 1; i >= 0 && remaining > 0; i -= 1) {
+    const piece = source[i]!;
+    const pieceWidth = stringWidth(piece.text);
+    if (pieceWidth <= remaining) {
+      body.unshift(piece);
+      remaining -= pieceWidth;
+      continue;
+    }
+    const chars = [...piece.text];
+    let start = chars.length;
+    let used = 0;
+    while (start > 0) {
+      const cw = charWidth(chars[start - 1]!.codePointAt(0) ?? 0);
+      if (used + cw > remaining) break;
+      used += cw;
+      start -= 1;
+    }
+    if (start < chars.length) {
+      body.unshift({ ...piece, text: chars.slice(start).join("") });
+    }
+    remaining = 0;
+  }
+
+  return [[first.tag, ...body], ...kept.slice(1).map((row) => row.pieces)];
 }
 
 function formatElapsed(seconds: number) {
@@ -343,16 +457,19 @@ export function CaptionScreen(props: CaptionScreenProps) {
     if (input === "s") props.onOpenSettings();
   });
 
-  const segments = buildSegments({
+  const utterances = toLines({
     finalTokens: props.finalTokens,
     pendingTokens: props.pendingTokens,
     focusedSpeakers,
   });
-  const captionLines = wrapSegments({ segments, width: columns });
+  const captionLines = wrapUtterances({
+    utterances,
+    width: columns,
+    maxLines: CAPTION_LINE_COUNT,
+  });
   const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
   const focusedSpeakerIds = formatFocusLabel(focusedSpeakers);
-  const focusEmpty =
-    focusedSpeakers.size > 0 && !hasCaptionText(segments) && !props.ended;
+  const focusEmpty = focusedSpeakers.size > 0 && utterances.length === 0 && !props.ended;
   const heardIds = heardSpeakerIds([...props.finalTokens, ...props.pendingTokens]);
   const liveHints =
     props.state === "paused"
@@ -397,7 +514,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
           onExit={props.onCloseSettings}
         />
       ) : (
-        <Box flexDirection="column" height={CAPTION_LINE_COUNT}>
+        <Box flexDirection="column" height={CAPTION_LINE_COUNT} justifyContent="flex-end">
           {focusEmpty ? (
             <Text dimColor>
               {`No speech from ${formatSpeakerIds(focusedSpeakerIds ?? [])}${

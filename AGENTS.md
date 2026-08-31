@@ -2,11 +2,11 @@
 
 Agent workflow for this repo. Details live in linked docs — do not duplicate them here.
 
-| Doc | Role |
-| --- | --- |
-| [README.md](./README.md) | Users / npm |
-| [docs/CONVENTIONS.md](./docs/CONVENTIONS.md) | Code style |
-| [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) | Commits, PRs, release |
+| Doc                                            | Role                   |
+| ---------------------------------------------- | ---------------------- |
+| [README.md](./README.md)                       | Users / npm            |
+| [docs/CONVENTIONS.md](./docs/CONVENTIONS.md)   | Code style             |
+| [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) | Commits, PRs, release  |
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Hot/cold design intent |
 
 ## Rules
