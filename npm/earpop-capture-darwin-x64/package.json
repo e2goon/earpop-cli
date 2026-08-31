@@ -1,6 +1,6 @@
 {
   "name": "earpop-capture-darwin-x64",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "earpop-cli microphone capture sidecar (darwin x64)",
   "license": "MIT",
   "os": [
