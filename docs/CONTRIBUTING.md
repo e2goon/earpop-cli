@@ -18,14 +18,14 @@
 - No `Co-authored-by: Cursor` trailers
 - Commit only when the maintainer asks
 
-| Type | Use |
-| --- | --- |
-| `feat` | User-facing feature |
-| `fix` | Bug fix |
-| `docs` | Docs only |
-| `refactor` | No feature/fix |
-| `perf` | Performance |
-| `test` / `build` / `ci` / `chore` / `style` | As named |
+| Type                                        | Use                 |
+| ------------------------------------------- | ------------------- |
+| `feat`                                      | User-facing feature |
+| `fix`                                       | Bug fix             |
+| `docs`                                      | Docs only           |
+| `refactor`                                  | No feature/fix      |
+| `perf`                                      | Performance         |
+| `test` / `build` / `ci` / `chore` / `style` | As named            |
 
 ## Pull requests
 
@@ -33,9 +33,11 @@ GitHub (`gh pr` when asked). Title = commit subject. Prefer squash merge.
 
 ```markdown
 ## Summary
+
 - …
 
 ## Test plan
+
 - [ ] …
 ```
 
