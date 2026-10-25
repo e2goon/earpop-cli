@@ -5,7 +5,7 @@ import { resolveRegion } from "#/lib/region.js";
 import { loadSettings } from "#/lib/settings.js";
 
 const HELP = [
-  "earpop — live transcription",
+  "earpop: live transcription",
   "",
   "Usage:",
   "  earpop                       Start live transcription (s opens settings)",

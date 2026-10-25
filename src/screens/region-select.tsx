@@ -13,7 +13,7 @@ export function RegionSelect(props: { onPick: (region: SttRegion) => void }) {
       </Text>
       <Select
         options={REGIONS.map((region) => ({
-          label: `${region.option}${region.code === DEFAULT_REGION ? " — default" : ""}`,
+          label: `${region.option}${region.code === DEFAULT_REGION ? " (default)" : ""}`,
           value: region.code,
         }))}
         onChange={(value) => props.onPick(value as SttRegion)}

@@ -72,8 +72,8 @@ export function LiveApp() {
     quit(journalPath === null ? undefined : () => printSessionEnd(journalPath));
   };
 
-  // First Esc / Ctrl+C: stop session, keep path on screen. Second press: exit once the
-  // transcript is finalized. Third press: exit immediately.
+  // Ctrl+C, or ESC confirmed on the caption screen, ends the session and keeps the path on screen.
+  // The next press exits once the transcript is finalized; one more exits immediately.
   const sessionEndedRef = useRef(false);
   const exitStartedRef = useRef(false);
 
@@ -140,7 +140,7 @@ export function LiveApp() {
       });
       controllerRef.current = controller;
       await controller.start();
-      setPhase("live");
+      if (!sessionEndedRef.current) setPhase("live");
     } catch (error) {
       failFatal(errorMessage(error));
     }
@@ -185,13 +185,15 @@ export function LiveApp() {
   });
 
   useEffect(() => {
-    void loadSettings().then((settings) => boot(settings));
+    void loadSettings()
+      .then((settings) => boot(settings))
+      .catch((error: unknown) => failFatal(errorMessage(error)));
   }, []);
 
   useAlternateScreen(phase === "live" || phase === "ended" || phase === "boot");
 
   if (phase === "boot") {
-    return <Text>Preparing…</Text>;
+    return <Text>Preparing</Text>;
   }
 
   if (phase === "region-select") {
@@ -251,6 +253,7 @@ export function LiveApp() {
             microphones={microphones}
             loading={micsLoading}
             onPick={(name) => {
+              setPhase("boot");
               void (async () => {
                 await saveSettings({ microphone: name });
                 const apiKey = await loadApiKey(region);
@@ -259,7 +262,7 @@ export function LiveApp() {
                   return;
                 }
                 await startLive({ region, apiKey, deviceName: name });
-              })();
+              })().catch((error: unknown) => failFatal(errorMessage(error)));
             }}
           />
         )}
@@ -272,7 +275,7 @@ export function LiveApp() {
   }
 
   if (snapshot === null) {
-    return <Text>Preparing…</Text>;
+    return <Text>Preparing</Text>;
   }
 
   const overlayRegion = overlay.kind === "settings" ? (overlay.region ?? region) : region;
@@ -379,9 +382,9 @@ export function LiveApp() {
             patchSettings({
               region: next,
               hasApiKey: key !== null,
-              notice: `Region set to ${regionLabel(next)} — applies after restart${
-                key === null ? " (register an API key for this region)" : ""
-              }`,
+              notice: `Region set to ${regionLabel(next)} (applies after restart${
+                key === null ? ", register an API key for this region" : ""
+              })`,
             });
           })
           .catch(failSettings("save region"));
@@ -391,7 +394,7 @@ export function LiveApp() {
           .then(() =>
             patchSettings({
               hasApiKey: true,
-              notice: `Saved API key for ${regionLabel(overlayRegion)} — applies after restart`,
+              notice: `Saved API key for ${regionLabel(overlayRegion)} (applies after restart)`,
             }),
           )
           .catch(failSettings("save API key"));
@@ -401,7 +404,7 @@ export function LiveApp() {
           .then(() =>
             patchSettings({
               hasApiKey: false,
-              notice: `Deleted API key for ${regionLabel(overlayRegion)} — applies after restart`,
+              notice: `Deleted API key for ${regionLabel(overlayRegion)} (applies after restart)`,
             }),
           )
           .catch(failSettings("delete API key"));

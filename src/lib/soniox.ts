@@ -170,13 +170,6 @@ export function startSession({
         return;
       }
 
-      if (response.finished === true) {
-        finishedSeen = true;
-        clearKeepalive();
-        if (socket.readyState === WebSocket.OPEN) socket.close();
-        return;
-      }
-
       if (typeof response.error_code === "number") {
         errored = true;
         emit({
@@ -197,6 +190,21 @@ export function startSession({
           else if (raw.text !== END_TOKEN_TEXT) final.push(toToken(raw));
         }
         emit({ type: "tokens", final, pending });
+      }
+
+      if (response.finished === true) {
+        finishedSeen = true;
+        clearKeepalive();
+        // Unrequested finish (e.g. stream time limit): report it so the controller reconnects.
+        if (resolveStop === null) {
+          emit({
+            type: "state",
+            state: "error",
+            message: "Session ended by the server",
+            retryable: true,
+          });
+        }
+        if (socket.readyState === WebSocket.OPEN) socket.close();
       }
     });
 

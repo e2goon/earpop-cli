@@ -15,6 +15,9 @@ const BACKOFF_INITIAL_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const BACKOFF_STABLE_MS = 30_000;
 const NOTICE_MS = 4_000;
+const MIC_LOST = "Press m to choose another microphone";
+const NO_SPACE_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 type LiveState = Exclude<SttState, "stopped">;
 
@@ -138,12 +141,19 @@ export function createTranscription({
     emit(true);
   }
 
-  // A new session starts mid-conversation; keep a space after the previous session's last word.
+  // A new session starts mid-conversation; keep a space after the previous session's last word
+  // unless either side is a script written without spaces.
   function spaceAfterPrevious(tokens: Token[]) {
     const previous = history.at(-1);
     const first = tokens[0];
     if (previous === undefined || first === undefined) return tokens;
     if (/\s$/.test(previous.text) || /^\s/.test(first.text)) return tokens;
+    if (
+      NO_SPACE_SCRIPT.test(previous.text.slice(-1)) ||
+      NO_SPACE_SCRIPT.test(first.text.charAt(0))
+    ) {
+      return tokens;
+    }
     return [{ ...first, text: ` ${first.text}` }, ...tokens.slice(1)];
   }
 
@@ -173,6 +183,7 @@ export function createTranscription({
   }
 
   function scheduleReconnect(message: string) {
+    releaseSession();
     // Clear connecting or a pending connect() guards forever and reconnect never runs.
     connecting = false;
     state = "connecting";
@@ -227,9 +238,14 @@ export function createTranscription({
             if (event.state === "listening") {
               connecting = false;
               listeningSinceMs = Date.now();
-              state = "listening";
-              stateMessage = undefined;
               offsetMs = journal.session(device);
+              if (capture !== null) {
+                state = "listening";
+                stateMessage = undefined;
+              } else {
+                state = "error";
+                stateMessage = MIC_LOST;
+              }
             } else if (event.state === "error") {
               if (event.retryable === true) {
                 scheduleReconnect(event.message ?? "Connection error");
@@ -281,8 +297,9 @@ export function createTranscription({
         session?.sendAudio(frame);
       },
       onError: (message) => {
+        capture = null;
         state = "error";
-        stateMessage = `${message}. Press m to choose another microphone`;
+        stateMessage = `${message}. ${MIC_LOST}`;
         emit(true);
       },
     });
@@ -314,14 +331,17 @@ export function createTranscription({
       return history;
     },
 
-    async start() {
-      startedAtMs = Date.now();
-      capture = await openCapture(device);
-      device = capture.device;
-      emit();
+    start() {
+      return enqueue(async () => {
+        if (stopped) return;
+        startedAtMs = Date.now();
+        capture = await openCapture(device);
+        device = capture.device;
+        emit();
 
-      startElapsedTimer();
-      await connect();
+        startElapsedTimer();
+        void connect();
+      });
     },
 
     togglePause() {
@@ -362,8 +382,7 @@ export function createTranscription({
 
     switchMicrophone(name: string) {
       return enqueue(async () => {
-        if (name === device || stopped) return;
-        const previous = device;
+        if (stopped || (name === device && (paused || capture !== null))) return;
 
         if (paused) {
           device = name;
@@ -386,19 +405,8 @@ export function createTranscription({
           await saveSettings({ microphone: device });
           flash(`Switched microphone to ${device}`);
         } catch (error) {
-          flash(
-            `Failed to switch microphone: ${errorMessage(error)} (keeping previous microphone)`,
-          );
-          try {
-            capture = await openCapture(previous);
-            device = capture.device;
-            journal.session(device);
-            await saveSettings({ microphone: device });
-          } catch {
-            state = "error";
-            stateMessage = "No working microphone. Press m to choose another microphone";
-            emit(true);
-          }
+          const kept = capture !== null ? " (keeping the previous microphone)" : "";
+          flash(`Failed to switch microphone: ${errorMessage(error)}${kept}`);
         }
       });
     },

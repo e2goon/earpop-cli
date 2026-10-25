@@ -10,7 +10,7 @@ const CANDIDATES: Array<{ command: string; args: string[] }> = [
 ];
 
 export function shortPath(path: string) {
-  return `[…/${basename(path)}]`;
+  return basename(path);
 }
 
 function copyToClipboard(text: string) {

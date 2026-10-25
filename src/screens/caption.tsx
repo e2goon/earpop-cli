@@ -359,7 +359,7 @@ function StatusLine(props: {
       <Box flexShrink={1}>
         <StatusLabel state={props.state} stateMessage={props.stateMessage} />
         {props.focusedSpeakers.length > 0 && (
-          <Text dimColor>{` · focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
+          <Text dimColor>{`  focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
         )}
         {props.notice !== undefined && <Text color="yellow">{`  ${props.notice}`}</Text>}
       </Box>
@@ -579,8 +579,8 @@ export function CaptionScreen(props: CaptionScreenProps) {
           {focusEmpty ? (
             <Text dimColor>
               {`No speech from ${formatSpeakerIds(focusedSpeakerIds)}${
-                heardIds.length > 0 ? ` · heard ${formatSpeakerIds(heardIds)}` : ""
-              } · 0 show all`}
+                heardIds.length > 0 ? `, heard ${formatSpeakerIds(heardIds)}` : ""
+              }. Press 0 to show all`}
             </Text>
           ) : (
             captionLines.map((line, index) => <CaptionRow key={index} line={line} />)

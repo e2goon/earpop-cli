@@ -42,7 +42,10 @@ export function SettingsApp() {
       setHasApiKey(key !== null);
       setMicrophones(found);
       setLoading(false);
-    })();
+    })().catch((error: unknown) => {
+      setNotice(`Failed to load settings: ${errorMessage(error)}`);
+      setLoading(false);
+    });
   }, []);
 
   return (
@@ -74,7 +77,7 @@ export function SettingsApp() {
           setHasApiKey(key !== null);
           setNotice(
             `Region set to ${regionLabel(next)}${
-              key === null ? " — register an API key for this region" : ""
+              key === null ? " (register an API key for this region)" : ""
             }`,
           );
         });

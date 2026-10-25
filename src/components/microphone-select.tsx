@@ -44,10 +44,12 @@ export function MicrophoneSelect(props: MicrophoneSelectProps) {
     <Box flexDirection="column" gap={1}>
       <Select
         options={props.microphones.map((microphone) => ({
-          label: microphone.name + (microphone.isDefault ? " (default)" : ""),
+          label:
+            microphone.name +
+            (microphone.isDefault ? " (default)" : "") +
+            (microphone.name === props.current ? " (current)" : ""),
           value: microphone.name,
         }))}
-        defaultValue={props.current}
         onChange={props.onPick}
       />
       {props.onCancel && <Text dimColor>ESC cancel</Text>}

@@ -10,15 +10,15 @@ const STDERR_KEEP_CHARS = 4_096;
 
 function micPermissionHint() {
   if (process.platform === "darwin") {
-    return "allow this terminal app under System Settings > Privacy & Security > Microphone";
+    return "Allow this terminal app under System Settings > Privacy & Security > Microphone";
   }
   if (process.platform === "win32") {
-    return "allow microphone access in Windows Settings > Privacy & security > Microphone";
+    return "Allow microphone access in Windows Settings > Privacy & security > Microphone";
   }
   if (process.platform === "linux") {
-    return "check microphone permissions and that ALSA/PipeWire can open the device";
+    return "Check microphone permissions and that ALSA/PipeWire can open the device";
   }
-  return "check microphone permissions";
+  return "Check microphone permissions";
 }
 
 function captureDetail({ code, stderr }: { code: number | null; stderr: string }) {
@@ -60,7 +60,7 @@ export function startCapture({ device, onFrame, onError }: AudioOptions) {
 
     child.on("close", (code) => {
       if (!settled) {
-        fail(`Cannot use microphone: ${captureDetail({ code, stderr })} — ${micPermissionHint()}`);
+        fail(`Cannot use microphone (${captureDetail({ code, stderr })}). ${micPermissionHint()}`);
         return;
       }
       if (!stopped) onError(`Microphone stopped (${captureDetail({ code, stderr })})`);
