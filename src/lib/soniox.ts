@@ -145,9 +145,9 @@ export function startSession({
               clearTimeout(timeout);
               done();
             };
-            // Empty binary frame is the end signal; do not throw if the socket already closed.
+            // An empty text frame ends the audio; Soniox ignores an empty binary frame.
             try {
-              socket.send(Buffer.alloc(0));
+              socket.send("");
             } catch {
               clearTimeout(timeout);
               done();
