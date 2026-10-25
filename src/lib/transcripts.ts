@@ -136,8 +136,11 @@ export async function exportText(id: string) {
 
   const paragraphs: Paragraph[] = [];
   for (const token of transcript.tokens) {
-    if (token.text.trim() === "") continue;
     const previous = paragraphs.at(-1);
+    if (token.text.trim() === "") {
+      if (previous !== undefined) previous.text += token.text;
+      continue;
+    }
     if (
       previous === undefined ||
       token.speaker !== previous.speaker ||
