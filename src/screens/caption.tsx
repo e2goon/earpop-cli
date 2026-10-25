@@ -503,16 +503,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
           : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  0 all  Up history  m mic  s settings  ESC end`;
 
   return (
-    <Box flexDirection="column">
-      <StatusLine
-        state={props.ended ? "stopped" : props.state}
-        stateMessage={props.stateMessage}
-        elapsedSeconds={props.elapsedSeconds}
-        focusedSpeakers={focusedSpeakerIds}
-      />
-
-      {showPath && <Text color="yellow">{shortPath(props.journalPath!)} copied to clipboard</Text>}
-
+    <Box flexDirection="column" height={rows} justifyContent="flex-end">
       {props.overlay.kind === "mic" ? (
         <MicrophoneSelect
           microphones={props.overlay.microphones}
@@ -553,6 +544,13 @@ export function CaptionScreen(props: CaptionScreenProps) {
         </Box>
       )}
 
+      {showPath && <Text color="yellow">{shortPath(props.journalPath!)} copied to clipboard</Text>}
+      <StatusLine
+        state={props.ended ? "stopped" : props.state}
+        stateMessage={props.stateMessage}
+        elapsedSeconds={props.elapsedSeconds}
+        focusedSpeakers={focusedSpeakerIds}
+      />
       {!overlayOpen && (
         <Box width="100%">
           <Text dimColor wrap="truncate-end">
