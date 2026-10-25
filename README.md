@@ -45,7 +45,7 @@ Dimmed text is provisional and gets replaced once Soniox finalizes it. The live 
 | `s`        | Settings                                                                                            |
 | `Up`       | Open the session history. `Up`/`Down` and `PgUp`/`PgDn` scroll, `Home` jumps to the start           |
 | `End`      | Leave the history and return to live captions (`ESC` does the same while the history is open)       |
-| `ESC`      | End the session, then press again to quit                                                           |
+| `ESC`      | Press twice to end the session, then once more to quit                                              |
 
 `Ctrl+C` does the same as `ESC`. When you quit, earpop waits for the last captions to be saved; press once more to quit right away.
 

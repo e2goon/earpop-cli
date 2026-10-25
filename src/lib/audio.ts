@@ -21,9 +21,8 @@ function micPermissionHint() {
   return "check microphone permissions";
 }
 
-function captureErrorMessage({ code, stderr }: { code: number | null; stderr: string }) {
-  const detail = stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${code ?? "unknown"}`;
-  return `Cannot use microphone: ${detail} — ${micPermissionHint()}`;
+function captureDetail({ code, stderr }: { code: number | null; stderr: string }) {
+  return stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${code ?? "unknown"}`;
 }
 
 export function startCapture({ device, onFrame, onError }: AudioOptions) {
@@ -61,10 +60,10 @@ export function startCapture({ device, onFrame, onError }: AudioOptions) {
 
     child.on("close", (code) => {
       if (!settled) {
-        fail(captureErrorMessage({ code, stderr }));
+        fail(`Cannot use microphone: ${captureDetail({ code, stderr })} — ${micPermissionHint()}`);
         return;
       }
-      if (!stopped) onError(captureErrorMessage({ code, stderr }));
+      if (!stopped) onError(`Microphone stopped (${captureDetail({ code, stderr })})`);
     });
 
     child.stderr.on("data", (chunk: Buffer) => {

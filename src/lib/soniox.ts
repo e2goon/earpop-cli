@@ -211,7 +211,7 @@ export function startSession({
         emit({
           type: "state",
           state: "error",
-          message: "Connection lost. Reconnecting automatically",
+          message: "Connection lost",
           retryable: true,
         });
       }

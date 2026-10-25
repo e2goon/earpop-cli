@@ -1,6 +1,6 @@
 import { Spinner } from "@inkjs/ui";
 import { Text, useInput, useWindowSize, Box } from "ink";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import stringWidth from "string-width";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
@@ -26,6 +26,7 @@ export type CaptionOverlay =
 interface CaptionScreenProps {
   state: SttState;
   stateMessage?: string;
+  notice?: string;
   device: string;
   finalTokens: Token[];
   pendingTokens: Token[];
@@ -49,6 +50,7 @@ interface CaptionScreenProps {
 }
 
 const CAPTION_LINE_COUNT = 6;
+const END_CONFIRM_MS = 2_000;
 const CAPTION_TAIL_CHARS = 1200;
 
 /** Fixed palette for speaker tags S1–S9 (Ink named colors). */
@@ -337,25 +339,35 @@ function formatElapsed(seconds: number) {
 function StatusLine(props: {
   state: SttState;
   stateMessage?: string;
+  notice?: string;
+  device: string;
   elapsedSeconds: number;
   focusedSpeakers: string[];
 }) {
   return (
-    <Box width="100%" justifyContent="space-between">
-      <Box>
+    <Box width="100%" justifyContent="space-between" gap={2}>
+      <Box flexShrink={1}>
         <StatusLabel state={props.state} stateMessage={props.stateMessage} />
         {props.focusedSpeakers.length > 0 && (
           <Text dimColor>{` · focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
         )}
+        {props.notice !== undefined && <Text color="yellow">{`  ${props.notice}`}</Text>}
       </Box>
-      <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
+      <Box flexShrink={0} gap={2}>
+        {props.device !== "default" && (
+          <Text dimColor wrap="truncate-middle">
+            {props.device}
+          </Text>
+        )}
+        <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
+      </Box>
     </Box>
   );
 }
 
 function StatusLabel(props: { state: SttState; stateMessage?: string }) {
   if (props.state === "connecting") {
-    return <Spinner label="Connecting" />;
+    return <Spinner label={props.stateMessage ?? "Connecting"} />;
   }
   if (props.state === "paused") {
     return (
@@ -402,6 +414,13 @@ export function CaptionScreen(props: CaptionScreenProps) {
   const [focusedSpeakers, setFocusedSpeakers] = useState(() => new Set<string>());
   // null = live view; otherwise finals frozen on entry, scrolled `offset` rows up from the bottom.
   const [history, setHistory] = useState<{ tokens: Token[]; offset: number } | null>(null);
+  const [confirmingEnd, setConfirmingEnd] = useState(false);
+
+  useEffect(() => {
+    if (!confirmingEnd) return;
+    const timer = setTimeout(() => setConfirmingEnd(false), END_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [confirmingEnd]);
 
   const { utterances, captionLines } = useMemo(() => {
     const utterances = toLines({
@@ -483,7 +502,8 @@ export function CaptionScreen(props: CaptionScreenProps) {
       return;
     }
     if (key.escape) {
-      props.onQuit();
+      if (confirmingEnd) props.onQuit();
+      else setConfirmingEnd(true);
       return;
     }
     if (input === "m") props.onOpenMicrophones();
@@ -500,7 +520,9 @@ export function CaptionScreen(props: CaptionScreenProps) {
         ? "Saving transcript  ESC force quit"
         : props.ended
           ? "Up history  ESC quit"
-          : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  0 all  Up history  m mic  s settings  ESC end`;
+          : confirmingEnd
+            ? "Press ESC again to end the session"
+            : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  0 all  Up history  m mic  s settings  ESC end`;
 
   return (
     <Box flexDirection="column" height={rows} justifyContent="flex-end">
@@ -548,6 +570,8 @@ export function CaptionScreen(props: CaptionScreenProps) {
       <StatusLine
         state={props.ended ? "stopped" : props.state}
         stateMessage={props.stateMessage}
+        notice={props.notice}
+        device={props.device}
         elapsedSeconds={props.elapsedSeconds}
         focusedSpeakers={focusedSpeakerIds}
       />

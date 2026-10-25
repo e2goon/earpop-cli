@@ -14,12 +14,14 @@ const UI_EMIT_INTERVAL_MS = 150;
 const BACKOFF_INITIAL_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const BACKOFF_STABLE_MS = 30_000;
+const NOTICE_MS = 4_000;
 
 type LiveState = Exclude<SttState, "stopped">;
 
 export interface TranscriptionSnapshot {
   state: LiveState;
   stateMessage?: string;
+  notice?: string;
   device: string;
   finalTokens: Token[];
   pendingTokens: Token[];
@@ -68,6 +70,8 @@ export function createTranscription({
 
   let state: LiveState = "connecting";
   let stateMessage: string | undefined;
+  let notice: string | undefined;
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
   let finalTokens: Token[] = [];
   let finalChars = 0;
   const history: Token[] = [];
@@ -87,6 +91,7 @@ export function createTranscription({
     onSnapshot({
       state,
       stateMessage,
+      notice,
       device,
       finalTokens,
       pendingTokens,
@@ -120,6 +125,26 @@ export function createTranscription({
     }
   }
 
+  function flash(message: string) {
+    notice = message;
+    if (noticeTimer !== null) clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => {
+      notice = undefined;
+      noticeTimer = null;
+      emit(true);
+    }, NOTICE_MS);
+    emit(true);
+  }
+
+  // A new session starts mid-conversation; keep a space after the previous session's last word.
+  function spaceAfterPrevious(tokens: Token[]) {
+    const previous = history.at(-1);
+    const first = tokens[0];
+    if (previous === undefined || first === undefined) return tokens;
+    if (/\s$/.test(previous.text) || /^\s/.test(first.text)) return tokens;
+    return [{ ...first, text: ` ${first.text}` }, ...tokens.slice(1)];
+  }
+
   function pushTail(tokens: Token[]) {
     const next = finalTokens.concat(tokens);
     for (const token of tokens) finalChars += token.text.length;
@@ -150,7 +175,7 @@ export function createTranscription({
     // Clear connecting or a pending connect() guards forever and reconnect never runs.
     connecting = false;
     state = "connecting";
-    stateMessage = `${message} — reconnecting in ${Math.round(backoffMs / 1000)}s`;
+    stateMessage = `${message}, retrying in ${Math.round(backoffMs / 1000)}s`;
     emit(true);
 
     const delay = backoffMs;
@@ -166,6 +191,7 @@ export function createTranscription({
     connecting = true;
     const generation = ++connectGeneration;
     let offsetMs = 0;
+    let sessionHasFinal = false;
     state = "connecting";
     stateMessage = undefined;
     emit(true);
@@ -181,13 +207,17 @@ export function createTranscription({
           if (stopped) return;
           if (event.type === "tokens") {
             if (event.final.length > 0) {
-              journal.tokens({ tokens: event.final, offsetMs });
-              history.push(...event.final);
-              pushTail(event.final);
-              speechContext = appendSttContext({ text: speechContext, tokens: event.final });
+              const final = sessionHasFinal ? event.final : spaceAfterPrevious(event.final);
+              sessionHasFinal = true;
+              journal.tokens({ tokens: final, offsetMs });
+              history.push(...final);
+              pushTail(final);
+              speechContext = appendSttContext({ text: speechContext, tokens: final });
             }
             // A replaced session still delivers its last finals; only the current one owns the provisional line.
-            if (generation === connectGeneration) pendingTokens = event.pending;
+            if (generation === connectGeneration) {
+              pendingTokens = sessionHasFinal ? event.pending : spaceAfterPrevious(event.pending);
+            }
             // Captions first: do not coalesce provisional tokens behind the paint interval.
             emit(true);
             return;
@@ -251,7 +281,8 @@ export function createTranscription({
         session?.sendAudio(frame);
       },
       onError: (message) => {
-        stateMessage = message;
+        state = "error";
+        stateMessage = `${message}. Press m to choose another microphone`;
         emit(true);
       },
     });
@@ -337,8 +368,7 @@ export function createTranscription({
         if (paused) {
           device = name;
           await saveSettings({ microphone: name });
-          stateMessage = `Switched microphone to ${name}`;
-          emit(true);
+          flash(`Switched microphone to ${name}`);
           return;
         }
 
@@ -349,21 +379,27 @@ export function createTranscription({
           capture = next;
           device = next.device;
           journal.session(device);
+          if (state === "error") {
+            state = session !== null ? "listening" : "connecting";
+            stateMessage = undefined;
+          }
           await saveSettings({ microphone: device });
-          stateMessage = `Switched microphone to ${device}`;
+          flash(`Switched microphone to ${device}`);
         } catch (error) {
-          stateMessage = `Failed to switch microphone: ${errorMessage(error)} (keeping previous microphone)`;
-          emit(true);
+          flash(
+            `Failed to switch microphone: ${errorMessage(error)} (keeping previous microphone)`,
+          );
           try {
             capture = await openCapture(previous);
             device = capture.device;
             journal.session(device);
             await saveSettings({ microphone: device });
           } catch {
-            stateMessage = "Failed to restore microphone. Press ESC to quit, then run again";
+            state = "error";
+            stateMessage = "No working microphone. Press m to choose another microphone";
+            emit(true);
           }
         }
-        emit(true);
       });
     },
 
@@ -375,7 +411,7 @@ export function createTranscription({
 
         languageHints = next;
         await saveSettings({ languages: next });
-        stateMessage = `Languages set to ${languageHintLabel(next)}`;
+        flash(`Languages set to ${languageHintLabel(next)}`);
 
         if (paused) {
           emit(true);
@@ -406,6 +442,7 @@ export function createTranscription({
         // Not stopped yet: the session's last finals arrive while it closes and must reach the journal.
         await teardownIO();
         stopped = true;
+        if (noticeTimer !== null) clearTimeout(noticeTimer);
         journal.close();
       });
     },
