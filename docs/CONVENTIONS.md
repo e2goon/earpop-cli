@@ -8,7 +8,7 @@
 
 - Files: **kebab-case**
 - Components: named function exports (`export function Foo() {}`)
-- Import alias: `#/*` → `src/*`
+- Import alias: `#/*` maps to `src/*`
 
 ## TypeScript
 
