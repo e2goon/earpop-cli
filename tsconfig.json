@@ -1,20 +1,18 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022"],
+    "target": "ES2024",
+    "lib": ["ES2024"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "types": ["node"],
-    "paths": {
-      "#/*": ["./src/*"]
-    }
+    "types": ["node"]
   },
   "include": ["src", "tsup.config.ts"]
 }

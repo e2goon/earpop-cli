@@ -27,14 +27,14 @@ Language hints default to English. Press `s` and choose "Choose languages" to ch
 ## Live screen
 
 ```text
-● Listening                                                     03:12
 [S1] So the plan is to ship the beta on Friday.
 [S2] Does that include the Windows build?
 [S1] Yes, the capture helper is ready for x64.
-p pause · 1-9 speaker · 0 all · m mic · s settings · ESC end
+● Listening                                                     03:12
+p pause  1-9 speaker  0 all  Up history  m mic  s settings  ESC end
 ```
 
-Dimmed text is provisional and gets replaced once Soniox finalizes it. Only the last six lines fit on screen; everything goes into the transcript file.
+Dimmed text is provisional and gets replaced once Soniox finalizes it. The live view shows the last six lines; press `Up` or scroll the mouse wheel to read earlier captions from this session. Everything also goes into the transcript file.
 
 | Key        | Action                                                                                              |
 | ---------- | --------------------------------------------------------------------------------------------------- |
@@ -43,9 +43,11 @@ Dimmed text is provisional and gets replaced once Soniox finalizes it. Only the 
 | `0`        | Show everyone again                                                                                 |
 | `m`        | Switch microphone                                                                                   |
 | `s`        | Settings                                                                                            |
-| `ESC`      | End the session, then press again to quit                                                           |
+| `Up`       | Open the session history. `Up`/`Down` and `PgUp`/`PgDn` scroll, `Home` jumps to the start           |
+| `End`      | Leave the history and return to live captions (`ESC` does the same while the history is open)       |
+| `ESC`      | Press twice to end the session, then once more to quit                                              |
 
-`Ctrl+C` does the same as `ESC`. If quitting gets stuck, press it once more to force it.
+`Ctrl+C` does the same as `ESC`. When you quit, earpop waits for the last captions to be saved; press once more to quit right away.
 
 When you quit, earpop prints the transcript path and copies it to the clipboard.
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useInterrupt } from "#/hooks/use-interrupt.js";
 import { deleteApiKey, loadApiKey, saveApiKey } from "#/lib/api-key.js";
+import { errorMessage } from "#/lib/errors.js";
 import {
   DEFAULT_LANGUAGE_HINTS,
   languageHintLabel,
@@ -30,19 +31,21 @@ export function SettingsApp() {
 
   useEffect(() => {
     void (async () => {
-      const [settings, resolved] = await Promise.all([loadSettings(), resolveRegion()]);
+      const microphonesLoad = listMicrophones().catch(() => [] as Microphone[]);
+      const settings = await loadSettings();
+      const resolved = resolveRegion(settings);
       regionRef.current = resolved;
-      const [key, found] = await Promise.all([
-        loadApiKey(resolved),
-        listMicrophones().catch(() => [] as Microphone[]),
-      ]);
+      const [key, found] = await Promise.all([loadApiKey(resolved), microphonesLoad]);
       setCurrentMicrophone(settings.microphone);
       setLanguages(normalizeLanguageHints(settings.languages));
       setRegion(resolved);
       setHasApiKey(key !== null);
       setMicrophones(found);
       setLoading(false);
-    })();
+    })().catch((error: unknown) => {
+      setNotice(`Failed to load settings: ${errorMessage(error)}`);
+      setLoading(false);
+    });
   }, []);
 
   return (
@@ -74,7 +77,7 @@ export function SettingsApp() {
           setHasApiKey(key !== null);
           setNotice(
             `Region set to ${regionLabel(next)}${
-              key === null ? " — register an API key for this region" : ""
+              key === null ? " (register an API key for this region)" : ""
             }`,
           );
         });
@@ -86,9 +89,7 @@ export function SettingsApp() {
             setNotice(`Saved API key for ${regionLabel(regionRef.current)}`);
           })
           .catch((error: unknown) => {
-            setNotice(
-              `Failed to save API key: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            setNotice(`Failed to save API key: ${errorMessage(error)}`);
           });
       }}
       onDeleteApiKey={() => {

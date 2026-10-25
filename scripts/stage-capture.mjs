@@ -5,24 +5,9 @@
  * node scripts/stage-capture.mjs --host
  * node scripts/stage-capture.mjs --package earpop-capture-darwin-arm64 [--from path]
  */
-import { copyFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const platforms = JSON.parse(
-  readFileSync(join(ROOT, "src/lib/capture-platforms.json"), "utf8"),
-);
-
-function hostPlatform() {
-  const os = process.platform;
-  const cpu = process.arch;
-  const hit = platforms.find((p) => p.os === os && p.cpu === cpu);
-  if (!hit) {
-    throw new Error(`No capture package for ${os}-${cpu}`);
-  }
-  return hit;
-}
+import { copyFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { ROOT, hostPlatform, platforms } from "./lib.mjs";
 
 function parseArgs(argv) {
   let pkg = null;
@@ -57,9 +42,10 @@ function stage(platform, fromPath) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const platform = args.host
-  ? hostPlatform()
-  : platforms.find((p) => p.package === args.pkg);
+const platform = args.host ? hostPlatform() : platforms.find((p) => p.package === args.pkg);
+if (args.host && !platform) {
+  throw new Error(`No capture package for ${process.platform}-${process.arch}`);
+}
 
 if (!platform) {
   console.error("Usage: stage-capture.mjs --host | --package <name> [--from path]");

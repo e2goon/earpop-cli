@@ -1,8 +1,5 @@
-import { spawn } from "node:child_process";
-
-import { resolveCaptureBin } from "#/lib/capture-bin.js";
-import { captureSpawnEnv } from "#/lib/capture-process.js";
-import type { Microphone } from "#/lib/types";
+import { killCapture, spawnCapture, spawnFailureMessage } from "#/lib/capture-process.js";
+import type { Microphone } from "#/lib/types.js";
 
 const DEVICE_LIST_TIMEOUT_MS = 5_000;
 
@@ -12,21 +9,13 @@ interface ListedMic {
 }
 
 export async function listMicrophones() {
-  const bin = resolveCaptureBin();
-  if (!bin.ok) {
-    throw new Error(bin.message);
-  }
+  const child = spawnCapture(["list"]);
 
   const raw = await new Promise<string>((resolve, reject) => {
-    const child = spawn(bin.path, ["list"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: captureSpawnEnv(),
-    });
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
-      if (process.platform === "win32") child.kill();
-      else child.kill("SIGKILL");
+      killCapture({ child, force: true });
       reject(new Error(`Timed out listing microphones after ${DEVICE_LIST_TIMEOUT_MS / 1000}s`));
     }, DEVICE_LIST_TIMEOUT_MS);
 
@@ -38,13 +27,7 @@ export async function listMicrophones() {
     });
     child.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
-      reject(
-        new Error(
-          error.code === "ENOENT"
-            ? `Failed to run capture helper: ${bin.path}`
-            : `Failed to run capture helper: ${error.message}`,
-        ),
-      );
+      reject(new Error(spawnFailureMessage({ child, error })));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -60,11 +43,8 @@ export async function listMicrophones() {
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
-    throw new Error("Capture helper returned invalid microphone list");
-  }
-
+    parsed = JSON.parse(raw);
+  } catch {}
   if (!Array.isArray(parsed)) {
     throw new Error("Capture helper returned invalid microphone list");
   }

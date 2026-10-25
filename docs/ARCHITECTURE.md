@@ -1,6 +1,6 @@
 # Architecture
 
-**Goal:** minimize speech → on-screen text. Split **hot** and **cold**; React is a renderer only.
+**Goal:** minimize the time from speech to on-screen text. Split **hot** and **cold**; React is a renderer only.
 
 ## Layers
 
@@ -12,22 +12,22 @@ UI (ink)  ←── one snapshot / setState per WS message ──  transcription
                                                          └── api-key / settings
 ```
 
-- **Hot:** mic → socket → tokens → UI — no blocking.
+- **Hot:** mic, socket, tokens, UI; no blocking.
 - **Cold:** journal, keepalive, settings — never stall hot.
-- **Journal** owns full finals; UI keeps a short tail (flat render cost).
+- **Journal** persists full finals; the controller also keeps them in memory for history scrollback. Live captions render only a short tail (flat render cost), and history renders only the visible rows.
 - Same controller modules power headless `transcripts` commands.
 
 ## Intentional STT / capture choices
 
 - Provisional captions first; finals may lag. Endpoint detection **off** (accuracy over early finalize).
 - Language hints from settings (default `["en"]`); strict when a single language is selected; rolling final-text context on reconnect.
-- Mic: cpal + rubato → 16 kHz mono; ~100ms (3200-byte) s16le frames; no ffmpeg.
+- Mic: cpal + rubato resample to 16 kHz mono; ~100ms (3200-byte) s16le frames; no ffmpeg.
 - WS: `perMessageDeflate: false`; drop frames if `bufferedAmount` ≳ 5s audio; on reconnect keep capture, drop frames.
-- One WS message → one snapshot → one UI update.
+- One WS message, one snapshot, one UI update.
 
 ## Capture packaging (why)
 
-Platform binaries ship as `optionalDependencies` (`earpop-capture-*`). Source of truth: `src/lib/capture-platforms.json` (keep Actions matrix aligned). Resolve / integrity / minimal spawn env: `capture-bin.ts`, `capture-integrity.json`, `capture-process.ts`. Release path: `pnpm release` → CI (`capture.yml`).
+Platform binaries ship as `optionalDependencies` (`earpop-capture-*`). Source of truth: `src/lib/capture-platforms.json` (keep Actions matrix aligned). Resolve / integrity / minimal spawn env: `capture-bin.ts`, `capture-integrity.json`, `capture-process.ts`. Release path: `pnpm release`, then CI (`capture.yml`).
 
 ## Product shape
 

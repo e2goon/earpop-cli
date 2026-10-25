@@ -8,13 +8,10 @@
  *   pnpm release --dry-run
  *   pnpm release --no-push
  */
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { ROOT, platforms, readJson, runOrExit, writeJson } from "./lib.mjs";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PLATFORMS_PATH = join(ROOT, "src/lib/capture-platforms.json");
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith("-"));
@@ -25,14 +22,6 @@ const noPush = flags.has("--no-push");
 function die(message) {
   console.error(message);
   process.exit(1);
-}
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
-}
-
-function writeJson(path, value) {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function run(command, runArgs, { allowFail = false } = {}) {
@@ -48,21 +37,8 @@ function run(command, runArgs, { allowFail = false } = {}) {
   return r;
 }
 
-function runInherit(command, runArgs) {
-  const r = spawnSync(command, runArgs, {
-    cwd: ROOT,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-  if (r.status !== 0) process.exit(r.status ?? 1);
-}
-
 function bumpSemver(version, kind) {
-  const parts = version.split(".").map((n) => Number(n));
-  if (parts.length !== 3 || parts.some((n) => !Number.isInteger(n) || n < 0)) {
-    die(`Invalid version: ${version}`);
-  }
-  let [major, minor, patch] = parts;
+  let [major, minor, patch] = version.split(".").map(Number);
   if (kind === "major") {
     major += 1;
     minor = 0;
@@ -70,10 +46,8 @@ function bumpSemver(version, kind) {
   } else if (kind === "minor") {
     minor += 1;
     patch = 0;
-  } else if (kind === "patch") {
-    patch += 1;
   } else {
-    die(`Unknown bump: ${kind}`);
+    patch += 1;
   }
   return `${major}.${minor}.${patch}`;
 }
@@ -129,28 +103,25 @@ if (dryRun) {
 rootPkg.version = next;
 writeJson(rootPkgPath, rootPkg);
 
-const platforms = readJson(PLATFORMS_PATH);
-for (const p of platforms) {
-  const pkgPath = join(ROOT, "npm", p.package, "package.json");
-  const pkg = readJson(pkgPath);
-  pkg.version = next;
-  writeJson(pkgPath, pkg);
-}
-
 const message = `chore: ${next}`;
 const toAdd = ["package.json"];
 for (const p of platforms) {
-  toAdd.push(join("npm", p.package, "package.json"));
+  const relPath = join("npm", p.package, "package.json");
+  const pkgPath = join(ROOT, relPath);
+  const pkg = readJson(pkgPath);
+  pkg.version = next;
+  writeJson(pkgPath, pkg);
+  toAdd.push(relPath);
 }
-runInherit("git", ["add", ...toAdd]);
-runInherit("git", ["commit", "-m", message]);
-runInherit("git", ["tag", tag]);
+runOrExit({ command: "git", args: ["add", ...toAdd] });
+runOrExit({ command: "git", args: ["commit", "-m", message] });
+runOrExit({ command: "git", args: ["tag", tag] });
 
 if (noPush) {
   console.log(`Committed and tagged ${tag}. Push skipped (--no-push).`);
   process.exit(0);
 }
 
-runInherit("git", ["push", "origin", "HEAD"]);
-runInherit("git", ["push", "origin", tag]);
+runOrExit({ command: "git", args: ["push", "origin", "HEAD"] });
+runOrExit({ command: "git", args: ["push", "origin", tag] });
 console.log(`Pushed ${tag}. CI will build and publish.`);

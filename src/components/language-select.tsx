@@ -8,7 +8,7 @@ import {
   type SttLanguage,
 } from "#/lib/languages.js";
 
-export interface LanguageSelectProps {
+interface LanguageSelectProps {
   current: SttLanguage[];
   onPick: (codes: SttLanguage[]) => void;
   onCancel: () => void;

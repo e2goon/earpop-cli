@@ -1,5 +1,7 @@
 import { startCapture } from "#/lib/audio.js";
+import { errorMessage } from "#/lib/errors.js";
 import { languageHintLabel, normalizeLanguageHints, type SttLanguage } from "#/lib/languages.js";
+import { createSerialQueue } from "#/lib/serial-queue.js";
 import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
@@ -12,19 +14,24 @@ const UI_EMIT_INTERVAL_MS = 150;
 const BACKOFF_INITIAL_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const BACKOFF_STABLE_MS = 30_000;
+const NOTICE_MS = 4_000;
+const MIC_LOST = "Press m to choose another microphone";
+const NO_SPACE_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 type LiveState = Exclude<SttState, "stopped">;
 
 export interface TranscriptionSnapshot {
   state: LiveState;
   stateMessage?: string;
+  notice?: string;
   device: string;
   finalTokens: Token[];
   pendingTokens: Token[];
   elapsedSeconds: number;
 }
 
-export interface TranscriptionOptions {
+interface TranscriptionOptions {
   journal: Journal;
   apiKey: string;
   device?: string;
@@ -35,13 +42,7 @@ export interface TranscriptionOptions {
   onFatal: (message: string) => void;
 }
 
-export interface TranscriptionController {
-  start(): Promise<void>;
-  togglePause(): Promise<void>;
-  switchMicrophone(name: string): Promise<void>;
-  setLanguageHints(codes: SttLanguage[]): Promise<void>;
-  stop(): Promise<void>;
-}
+export type TranscriptionController = ReturnType<typeof createTranscription>;
 
 export function createTranscription({
   journal,
@@ -62,24 +63,22 @@ export function createTranscription({
   let connecting = false;
   // Invalidate in-flight startSession() so soft-reconnect cannot adopt a stale socket.
   let connectGeneration = 0;
+  const closingSessions = new Set<Promise<void>>();
 
   let paused = false;
   let pausedAtMs = 0;
   let pausedTotalMs = 0;
 
   // Serialize togglePause/switchMicrophone/setLanguageHints/stop — overlapping ops can open capture atop teardown.
-  let opChain: Promise<void> = Promise.resolve();
-  function enqueue(op: () => Promise<void>) {
-    const run = opChain.then(op, op);
-    opChain = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
+  const enqueue = createSerialQueue();
 
   let state: LiveState = "connecting";
   let stateMessage: string | undefined;
+  let notice: string | undefined;
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  const history: Token[] = [];
+  let tailStart = 0;
+  let tailChars = 0;
   let finalTokens: Token[] = [];
   let pendingTokens: Token[] = [];
   let speechContext = "";
@@ -97,6 +96,7 @@ export function createTranscription({
     onSnapshot({
       state,
       stateMessage,
+      notice,
       device,
       finalTokens,
       pendingTokens,
@@ -130,13 +130,41 @@ export function createTranscription({
     }
   }
 
-  function pushTail(tokens: Token[]) {
-    finalTokens = [...finalTokens, ...tokens];
-    let total = finalTokens.reduce((sum, token) => sum + token.text.length, 0);
-    while (total > TAIL_CHARS && finalTokens.length > 1) {
-      total -= finalTokens[0]!.text.length;
-      finalTokens = finalTokens.slice(1);
+  function flash(message: string) {
+    notice = message;
+    if (noticeTimer !== null) clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => {
+      notice = undefined;
+      noticeTimer = null;
+      emit(true);
+    }, NOTICE_MS);
+    emit(true);
+  }
+
+  // A new session starts mid-conversation; keep a space after the previous session's last word
+  // unless either side is a script written without spaces.
+  function spaceAfterPrevious(tokens: Token[]) {
+    const previous = history.at(-1);
+    const first = tokens[0];
+    if (previous === undefined || first === undefined) return tokens;
+    if (/\s$/.test(previous.text) || /^\s/.test(first.text)) return tokens;
+    if (
+      NO_SPACE_SCRIPT.test(previous.text.slice(-1)) ||
+      NO_SPACE_SCRIPT.test(first.text.charAt(0))
+    ) {
+      return tokens;
     }
+    return [{ ...first, text: ` ${first.text}` }, ...tokens.slice(1)];
+  }
+
+  function addFinals(tokens: Token[]) {
+    history.push(...tokens);
+    for (const token of tokens) tailChars += token.text.length;
+    while (tailChars > TAIL_CHARS && history.length - tailStart > 1) {
+      tailChars -= history[tailStart]!.text.length;
+      tailStart += 1;
+    }
+    finalTokens = history.slice(tailStart);
   }
 
   function clearTimers() {
@@ -155,10 +183,11 @@ export function createTranscription({
   }
 
   function scheduleReconnect(message: string) {
+    releaseSession();
     // Clear connecting or a pending connect() guards forever and reconnect never runs.
     connecting = false;
     state = "connecting";
-    stateMessage = `${message} — reconnecting in ${Math.round(backoffMs / 1000)}s`;
+    stateMessage = `${message}, retrying in ${Math.round(backoffMs / 1000)}s`;
     emit(true);
 
     const delay = backoffMs;
@@ -173,6 +202,8 @@ export function createTranscription({
     if (stopped || paused || connecting) return;
     connecting = true;
     const generation = ++connectGeneration;
+    let offsetMs = 0;
+    let sessionHasFinal = false;
     state = "connecting";
     stateMessage = undefined;
     emit(true);
@@ -183,16 +214,38 @@ export function createTranscription({
         clientReferenceId,
         region,
         languageHints,
-        contextText: speechContext.length > 0 ? speechContext : undefined,
+        contextText: speechContext,
         onEvent: (event) => {
-          if (stopped || generation !== connectGeneration) return;
+          if (stopped) return;
+          if (event.type === "tokens") {
+            if (event.final.length > 0) {
+              const final = sessionHasFinal ? event.final : spaceAfterPrevious(event.final);
+              sessionHasFinal = true;
+              journal.tokens({ tokens: final, offsetMs });
+              addFinals(final);
+              speechContext = appendSttContext({ text: speechContext, tokens: final });
+            }
+            // A replaced session still delivers its last finals; only the current one owns the provisional line.
+            if (generation === connectGeneration) {
+              pendingTokens = sessionHasFinal ? event.pending : spaceAfterPrevious(event.pending);
+            }
+            // Captions first: do not coalesce provisional tokens behind the paint interval.
+            emit(true);
+            return;
+          }
+          if (generation !== connectGeneration) return;
           if (event.type === "state") {
             if (event.state === "listening") {
               connecting = false;
               listeningSinceMs = Date.now();
-              state = "listening";
-              stateMessage = undefined;
-              journal.session(device);
+              offsetMs = journal.session(device);
+              if (capture !== null) {
+                state = "listening";
+                stateMessage = undefined;
+              } else {
+                state = "error";
+                stateMessage = MIC_LOST;
+              }
             } else if (event.state === "error") {
               if (event.retryable === true) {
                 scheduleReconnect(event.message ?? "Connection error");
@@ -205,15 +258,6 @@ export function createTranscription({
               }
             }
             emit(true);
-          } else if (event.type === "tokens") {
-            if (event.final.length > 0) {
-              journal.tokens(event.final);
-              pushTail(event.final);
-              speechContext = appendSttContext({ text: speechContext, tokens: event.final });
-            }
-            pendingTokens = event.pending;
-            // Captions first: do not coalesce provisional tokens behind the paint interval.
-            emit(true);
           }
         },
       });
@@ -223,20 +267,12 @@ export function createTranscription({
         return;
       }
       session = nextSession;
+      connecting = false;
     } catch (error) {
       if (generation !== connectGeneration) return;
       connecting = false;
       if (stopped) return;
-      scheduleReconnect(error instanceof Error ? error.message : String(error));
-      return;
-    }
-
-    if (generation !== connectGeneration) return;
-    connecting = false;
-    if (stopped || paused) {
-      const orphan = session;
-      session = null;
-      void orphan?.stop().catch(() => {});
+      scheduleReconnect(errorMessage(error));
     }
   }
 
@@ -261,33 +297,51 @@ export function createTranscription({
         session?.sendAudio(frame);
       },
       onError: (message) => {
-        stateMessage = message;
+        capture = null;
+        state = "error";
+        stateMessage = `${message}. ${MIC_LOST}`;
         emit(true);
       },
     });
   }
 
-  async function teardownIO() {
+  function releaseSession() {
+    if (session === null) return;
+    const closed = session.stop().catch(() => {});
+    session = null;
+    closingSessions.add(closed);
+    void closed.then(() => closingSessions.delete(closed));
+  }
+
+  async function stopCapture() {
     try {
       await capture?.stop();
     } catch {}
     capture = null;
+  }
 
-    try {
-      await session?.stop();
-    } catch {}
-    session = null;
+  async function teardownIO() {
+    await stopCapture();
+    releaseSession();
+    await Promise.all(closingSessions);
   }
 
   return {
-    async start() {
-      startedAtMs = Date.now();
-      capture = await openCapture(device);
-      device = capture.device;
-      emit();
+    getHistory() {
+      return history;
+    },
 
-      startElapsedTimer();
-      await connect();
+    start() {
+      return enqueue(async () => {
+        if (stopped) return;
+        startedAtMs = Date.now();
+        capture = await openCapture(device);
+        device = capture.device;
+        emit();
+
+        startElapsedTimer();
+        void connect();
+      });
     },
 
     togglePause() {
@@ -301,39 +355,39 @@ export function createTranscription({
           state = "paused";
           pendingTokens = [];
           clearTimers();
-          await teardownIO();
           emit(true);
+          releaseSession();
+          await stopCapture();
           return;
         }
 
         paused = false;
         pausedTotalMs += Date.now() - pausedAtMs;
         pausedAtMs = 0;
+        state = "connecting";
+        stateMessage = undefined;
+        emit(true);
         try {
           capture = await openCapture(device);
         } catch (error) {
           state = "error";
-          stateMessage = error instanceof Error ? error.message : String(error);
+          stateMessage = errorMessage(error);
           emit(true);
           return;
         }
-        stateMessage = undefined;
         startElapsedTimer();
-        emit(true);
         await connect();
       });
     },
 
     switchMicrophone(name: string) {
       return enqueue(async () => {
-        if (name === device || stopped) return;
-        const previous = device;
+        if (stopped || (name === device && (paused || capture !== null))) return;
 
         if (paused) {
           device = name;
           await saveSettings({ microphone: name });
-          stateMessage = `Switched microphone to ${name}`;
-          emit(true);
+          flash(`Switched microphone to ${name}`);
           return;
         }
 
@@ -344,23 +398,16 @@ export function createTranscription({
           capture = next;
           device = next.device;
           journal.session(device);
-          await saveSettings({ microphone: device });
-          stateMessage = `Switched microphone to ${device}`;
-        } catch (error) {
-          stateMessage = `Failed to switch microphone: ${
-            error instanceof Error ? error.message : String(error)
-          } (keeping previous microphone)`;
-          emit(true);
-          try {
-            capture = await openCapture(previous);
-            device = capture.device;
-            journal.session(device);
-            await saveSettings({ microphone: device });
-          } catch {
-            stateMessage = "Failed to restore microphone. Press ESC to quit, then run again";
+          if (state === "error") {
+            state = session !== null ? "listening" : "connecting";
+            stateMessage = undefined;
           }
+          await saveSettings({ microphone: device });
+          flash(`Switched microphone to ${device}`);
+        } catch (error) {
+          const kept = capture !== null ? " (keeping the previous microphone)" : "";
+          flash(`Failed to switch microphone: ${errorMessage(error)}${kept}`);
         }
-        emit(true);
       });
     },
 
@@ -372,12 +419,8 @@ export function createTranscription({
 
         languageHints = next;
         await saveSettings({ languages: next });
-        stateMessage = `Languages set to ${languageHintLabel(next)}`;
-
-        if (paused) {
-          emit(true);
-          return;
-        }
+        flash(`Languages set to ${languageHintLabel(next)}`);
+        if (paused) return;
 
         if (reconnectTimer !== null) {
           clearTimeout(reconnectTimer);
@@ -388,12 +431,7 @@ export function createTranscription({
         // Invalidate any in-flight connect() before opening a replacement session.
         connectGeneration += 1;
         connecting = false;
-        try {
-          await session?.stop();
-        } catch {
-          // Soft reconnect: drop the old socket even if stop fails.
-        }
-        session = null;
+        releaseSession();
         emit(true);
         await connect();
       });
@@ -402,13 +440,14 @@ export function createTranscription({
     stop() {
       return enqueue(async () => {
         if (stopped) return;
-        stopped = true;
         connectGeneration += 1;
         clearTimers();
 
+        // Not stopped yet: closing sessions still deliver their last finals, which must reach the journal.
         await teardownIO();
+        stopped = true;
+        if (noticeTimer !== null) clearTimeout(noticeTimer);
         journal.close();
-        emit(true);
       });
     },
   };

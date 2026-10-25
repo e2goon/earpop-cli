@@ -2,14 +2,13 @@
 
 ## Language
 
-- **English:** UI, code comments, npm-facing docs. Comments: non-obvious **why** only.
-- **Korean:** commit/PR title description + body. Types/scopes stay English — [CONTRIBUTING.md](./CONTRIBUTING.md).
+- **English:** UI, code comments, docs, commit messages, and PRs ([CONTRIBUTING.md](./CONTRIBUTING.md)). Comments: non-obvious **why** only.
 
 ## Naming
 
 - Files: **kebab-case**
 - Components: named function exports (`export function Foo() {}`)
-- Import alias: `#/*` → `src/*`
+- Import alias: `#/*` maps to `src/*`
 
 ## TypeScript
 

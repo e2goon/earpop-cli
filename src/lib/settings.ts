@@ -1,18 +1,17 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { normalizeLanguageHints } from "#/lib/languages.js";
-import type { CliSettings } from "#/lib/types";
+import { appDataDir } from "#/lib/paths.js";
+import { isRegion } from "#/lib/region.js";
+import { createSerialQueue } from "#/lib/serial-queue.js";
+import type { CliSettings } from "#/lib/types.js";
 
 // Serialize concurrent saves so writers do not clobber each other.
-let writeChain: Promise<void> = Promise.resolve();
+const enqueueWrite = createSerialQueue();
 
 function settingsPath() {
-  if (process.platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", "com.earpop.app", "cli-settings.json");
-  }
-  return join(homedir(), ".earpop", "cli-settings.json");
+  return join(appDataDir(), "cli-settings.json");
 }
 
 export async function loadSettings() {
@@ -27,9 +26,7 @@ export async function loadSettings() {
     const parsed = JSON.parse(raw) as Partial<CliSettings>;
     const settings: CliSettings = {};
     if (typeof parsed.microphone === "string") settings.microphone = parsed.microphone;
-    if (parsed.region === "us" || parsed.region === "eu" || parsed.region === "jp") {
-      settings.region = parsed.region;
-    }
+    if (isRegion(parsed.region)) settings.region = parsed.region;
     if (Array.isArray(parsed.languages))
       settings.languages = normalizeLanguageHints(parsed.languages);
     return settings;
@@ -59,10 +56,5 @@ async function writeThrough(patch: Partial<CliSettings>) {
 }
 
 export function saveSettings(patch: Partial<CliSettings>) {
-  const run = writeChain.then(() => writeThrough(patch));
-  writeChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
+  return enqueueWrite(() => writeThrough(patch));
 }

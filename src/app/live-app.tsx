@@ -1,5 +1,5 @@
 import { Text, Box, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { useAlternateScreen } from "#/hooks/use-alternate-screen.js";
 import { useInterrupt } from "#/hooks/use-interrupt.js";
@@ -8,8 +8,9 @@ import {
   type TranscriptionController,
   type TranscriptionSnapshot,
 } from "#/lib/transcription.js";
-import { copyToClipboard, osc52Sequence } from "#/lib/clipboard.js";
+import { copyWithFallback } from "#/lib/clipboard.js";
 import { deleteApiKey, loadApiKey, saveApiKey } from "#/lib/api-key.js";
+import { errorMessage } from "#/lib/errors.js";
 import { openJournal } from "#/lib/journal.js";
 import {
   DEFAULT_LANGUAGE_HINTS,
@@ -22,7 +23,7 @@ import { regionLabel, resolveRegion } from "#/lib/region.js";
 import { saveSettings, loadSettings } from "#/lib/settings.js";
 import { STT_MODEL } from "#/lib/soniox.js";
 import { verifyApiKey } from "#/lib/verify-key.js";
-import type { Microphone, SttRegion } from "#/lib/types.js";
+import type { CliSettings, Microphone, SttRegion } from "#/lib/types.js";
 import { quit } from "#/app/runtime.js";
 import { printSessionEnd } from "#/app/session-end.js";
 import { CaptionScreen, type CaptionOverlay } from "#/screens/caption.js";
@@ -31,8 +32,6 @@ import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { RegionSelect } from "#/screens/region-select.js";
 
 type LivePhase = "boot" | "region-select" | "key-setup" | "mic-select" | "live" | "ended" | "fatal";
-
-const STOP_TIMEOUT_MS = 3_000;
 
 const CLOSED_OVERLAY: CaptionOverlay = { kind: "none" };
 
@@ -48,22 +47,7 @@ function FatalScreen(props: { message: string; onQuit: () => void }) {
   );
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 type SettingsOverlay = Extract<CaptionOverlay, { kind: "settings" }>;
-
-function patchSettingsOverlay({
-  prev,
-  patch,
-}: {
-  prev: CaptionOverlay;
-  patch: Partial<SettingsOverlay>;
-}) {
-  if (prev.kind !== "settings") return prev;
-  return { ...prev, ...patch };
-}
 
 export function LiveApp() {
   const [phase, setPhase] = useState<LivePhase>("boot");
@@ -74,65 +58,65 @@ export function LiveApp() {
   const [micNotice, setMicNotice] = useState<string | undefined>();
   const [snapshot, setSnapshot] = useState<TranscriptionSnapshot | null>(null);
   const [overlay, setOverlay] = useState<CaptionOverlay>(CLOSED_OVERLAY);
+  const [journalPath, setJournalPath] = useState<string | null>(null);
+  const [fatalMessage, setFatalMessage] = useState("Unknown error");
+  const [region, setRegion] = useState<SttRegion>("us");
+  const [finishing, setFinishing] = useState(false);
 
   const controllerRef = useRef<TranscriptionController | null>(null);
-  const journalPathRef = useRef<string | null>(null);
-  const fatalMessageRef = useRef<string | null>(null);
-  const regionRef = useRef<SttRegion>("us");
   const languageHintsRef = useRef<SttLanguage[]>([...DEFAULT_LANGUAGE_HINTS]);
   // Invalidate in-flight overlay loads when the overlay closes or is replaced.
   const overlayEpochRef = useRef(0);
 
-  const finish = useCallback(() => {
-    const path = journalPathRef.current;
-    quit(path === null ? undefined : () => printSessionEnd(path));
-  }, []);
+  const finish = () => {
+    quit(journalPath === null ? undefined : () => printSessionEnd(journalPath));
+  };
 
-  // First Esc / Ctrl+C: stop session, keep path on screen. Second press: exit.
+  // Ctrl+C, or ESC confirmed on the caption screen, ends the session and keeps the path on screen.
+  // The next press exits once the transcript is finalized; one more exits immediately.
   const sessionEndedRef = useRef(false);
   const exitStartedRef = useRef(false);
 
-  const copyJournalPath = useCallback(() => {
-    const path = journalPathRef.current;
-    if (path === null) return;
-    const copied = copyToClipboard(path);
-    if (!copied) process.stdout.write(osc52Sequence(path));
-  }, []);
+  const copyJournalPath = () => {
+    if (journalPath !== null) copyWithFallback(journalPath);
+  };
 
-  const requestExit = useCallback(() => {
-    if (sessionEndedRef.current || exitStartedRef.current || fatalMessageRef.current !== null) {
-      if (exitStartedRef.current) {
-        try {
-          void controllerRef.current?.stop();
-        } catch {
-          // Prefer exit over a stuck stop().
-        }
-        process.exit(130);
-      }
+  const closeOverlay = () => {
+    overlayEpochRef.current += 1;
+    setOverlay(CLOSED_OVERLAY);
+  };
+
+  const failFatal = (message: string) => {
+    setFatalMessage(message);
+    setPhase("fatal");
+  };
+
+  const requestExit = () => {
+    if (exitStartedRef.current) process.exit(130);
+    if (sessionEndedRef.current || phase === "fatal") {
       exitStartedRef.current = true;
-      finish();
+      setFinishing(true);
+      void Promise.resolve(controllerRef.current?.stop())
+        .catch(() => {})
+        .then(finish);
       return;
     }
 
     sessionEndedRef.current = true;
     copyJournalPath();
-    overlayEpochRef.current += 1;
-    setOverlay(CLOSED_OVERLAY);
+    closeOverlay();
     setPhase("ended");
 
-    const controller = controllerRef.current;
-    if (controller === null) {
+    if (controllerRef.current === null) {
       finish();
       return;
     }
-    void Promise.race([controller.stop(), delay(STOP_TIMEOUT_MS)]).then(() => {
-      // Stay on ended screen until the next Esc / Ctrl+C.
-    });
-  }, [copyJournalPath, finish]);
+    void controllerRef.current.stop().catch(() => {});
+  };
   useInterrupt(requestExit);
 
   async function startLive({
-    region,
+    region: liveRegion,
     apiKey,
     deviceName,
   }: {
@@ -140,28 +124,29 @@ export function LiveApp() {
     apiKey: string;
     deviceName?: string;
   }) {
-    const journal = openJournal(STT_MODEL);
-    journalPathRef.current = journal.path;
+    try {
+      const journal = openJournal(STT_MODEL);
+      setJournalPath(journal.path);
 
-    const controller = createTranscription({
-      journal,
-      apiKey,
-      device: deviceName,
-      clientReferenceId: journal.id,
-      region,
-      languageHints: languageHintsRef.current,
-      onSnapshot: setSnapshot,
-      onFatal: (message) => {
-        fatalMessageRef.current = message;
-        setPhase("fatal");
-      },
-    });
-    controllerRef.current = controller;
-    await controller.start();
-    setPhase("live");
+      const controller = createTranscription({
+        journal,
+        apiKey,
+        device: deviceName,
+        clientReferenceId: journal.id,
+        region: liveRegion,
+        languageHints: languageHintsRef.current,
+        onSnapshot: setSnapshot,
+        onFatal: failFatal,
+      });
+      controllerRef.current = controller;
+      await controller.start();
+      if (!sessionEndedRef.current) setPhase("live");
+    } catch (error) {
+      failFatal(errorMessage(error));
+    }
   }
 
-  const chooseInitialMicrophone = useCallback(async (savedName: string | null) => {
+  async function chooseInitialMicrophone(savedName: string | null) {
     setMicsLoading(true);
     setPhase("mic-select");
     try {
@@ -177,58 +162,45 @@ export function LiveApp() {
         );
       }
     } catch (error) {
-      setMicNotice(error instanceof Error ? error.message : String(error));
+      setMicNotice(errorMessage(error));
     }
     setMicsLoading(false);
-  }, []);
+  }
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const [settings, region] = await Promise.all([loadSettings(), resolveRegion()]);
-      regionRef.current = region;
-      languageHintsRef.current = normalizeLanguageHints(settings.languages);
-      const apiKey = await loadApiKey(region);
-      if (cancelled) return;
-      if (apiKey === null) {
-        setPhase("region-select");
-        return;
-      }
-      const savedName = settings.microphone ?? null;
-      if (savedName === null) {
-        await chooseInitialMicrophone(null);
-        return;
-      }
-      try {
-        await startLive({ region, apiKey, deviceName: savedName });
-      } catch (error) {
-        fatalMessageRef.current = error instanceof Error ? error.message : String(error);
-        setPhase("fatal");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Boot once on mount; startLive / chooseInitialMicrophone are intentionally omitted.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const [, setRenderTick] = useState(0);
-  const repaint = useCallback(() => setRenderTick((value) => value + 1), []);
-  useAlternateScreen({
-    active: phase === "live" || phase === "ended" || phase === "boot",
-    onRepaint: repaint,
+  const boot = useEffectEvent(async (settings: CliSettings) => {
+    const savedRegion = resolveRegion(settings);
+    setRegion(savedRegion);
+    languageHintsRef.current = normalizeLanguageHints(settings.languages);
+    const apiKey = await loadApiKey(savedRegion);
+    if (apiKey === null) {
+      setPhase("region-select");
+      return;
+    }
+    const savedName = settings.microphone ?? null;
+    if (savedName === null) {
+      await chooseInitialMicrophone(null);
+      return;
+    }
+    await startLive({ region: savedRegion, apiKey, deviceName: savedName });
   });
 
+  useEffect(() => {
+    void loadSettings()
+      .then((settings) => boot(settings))
+      .catch((error: unknown) => failFatal(errorMessage(error)));
+  }, []);
+
+  useAlternateScreen(phase === "live" || phase === "ended" || phase === "boot");
+
   if (phase === "boot") {
-    return <Text>Preparing…</Text>;
+    return <Text>Preparing</Text>;
   }
 
   if (phase === "region-select") {
     return (
       <RegionSelect
         onPick={(next) => {
-          regionRef.current = next;
+          setRegion(next);
           void saveSettings({ region: next });
           setPhase("key-setup");
         }}
@@ -241,16 +213,12 @@ export function LiveApp() {
       <KeySetup
         error={keyError}
         verifying={verifying}
-        regionLabel={regionLabel(regionRef.current)}
+        regionLabel={regionLabel(region)}
         onSubmit={(key) => {
           setVerifying(true);
           setKeyError(undefined);
           void (async () => {
-            const result = await verifyApiKey({
-              key,
-              region: regionRef.current,
-              model: STT_MODEL,
-            });
+            const result = await verifyApiKey({ key: key.trim(), region });
             if (!result.ok) {
               setKeyError(
                 `${result.message}\nIf the region is wrong, press ESC to quit, then change it with 'earpop settings'.`,
@@ -259,9 +227,9 @@ export function LiveApp() {
               return;
             }
             try {
-              await saveApiKey({ key, region: regionRef.current });
+              await saveApiKey({ key, region });
             } catch (error) {
-              setKeyError(error instanceof Error ? error.message : String(error));
+              setKeyError(errorMessage(error));
               setVerifying(false);
               return;
             }
@@ -285,21 +253,16 @@ export function LiveApp() {
             microphones={microphones}
             loading={micsLoading}
             onPick={(name) => {
+              setPhase("boot");
               void (async () => {
                 await saveSettings({ microphone: name });
-                const region = regionRef.current;
                 const apiKey = await loadApiKey(region);
                 if (apiKey === null) {
                   setPhase("region-select");
                   return;
                 }
-                try {
-                  await startLive({ region, apiKey, deviceName: name });
-                } catch (error) {
-                  fatalMessageRef.current = error instanceof Error ? error.message : String(error);
-                  setPhase("fatal");
-                }
-              })();
+                await startLive({ region, apiKey, deviceName: name });
+              })().catch((error: unknown) => failFatal(errorMessage(error)));
             }}
           />
         )}
@@ -308,37 +271,34 @@ export function LiveApp() {
   }
 
   if (phase === "fatal") {
-    return (
-      <FatalScreen message={fatalMessageRef.current ?? "Unknown error"} onQuit={requestExit} />
-    );
+    return <FatalScreen message={fatalMessage} onQuit={requestExit} />;
   }
 
   if (snapshot === null) {
-    return <Text>Preparing…</Text>;
+    return <Text>Preparing</Text>;
   }
+
+  const overlayRegion = overlay.kind === "settings" ? (overlay.region ?? region) : region;
+  const patchSettings = (patch: Partial<SettingsOverlay>) =>
+    setOverlay((prev) => (prev.kind === "settings" ? { ...prev, ...patch } : prev));
+  const failSettings = (action: string) => (error: unknown) =>
+    patchSettings({ notice: `Failed to ${action}: ${errorMessage(error)}` });
 
   return (
     <CaptionScreen
-      state={snapshot.state}
-      stateMessage={snapshot.stateMessage}
-      device={snapshot.device}
-      finalTokens={snapshot.finalTokens}
-      pendingTokens={snapshot.pendingTokens}
-      elapsedSeconds={snapshot.elapsedSeconds}
-      journalPath={journalPathRef.current ?? undefined}
+      {...snapshot}
+      journalPath={journalPath ?? undefined}
       ended={phase === "ended"}
+      finishing={finishing}
       overlay={overlay}
+      getHistory={() => controllerRef.current?.getHistory() ?? []}
       onTogglePause={() => {
-        if (phase === "ended") return;
         // Pause copies the transcript path to the clipboard on enter.
-        if (snapshot.state !== "paused" && journalPathRef.current !== null) {
-          copyJournalPath();
-        }
+        if (snapshot.state !== "paused") copyJournalPath();
         void controllerRef.current?.togglePause();
       }}
       onQuit={requestExit}
       onOpenMicrophones={() => {
-        if (phase === "ended") return;
         const epoch = ++overlayEpochRef.current;
         setOverlay({ kind: "mic", microphones: [], loading: true });
         void listMicrophones()
@@ -352,30 +312,26 @@ export function LiveApp() {
               kind: "mic",
               microphones: [],
               loading: false,
-              error: error instanceof Error ? error.message : String(error),
+              error: errorMessage(error),
             });
           });
       }}
       onOpenSettings={() => {
-        if (phase === "ended") return;
         const epoch = ++overlayEpochRef.current;
         setOverlay({
           kind: "settings",
           microphones: [],
           microphonesLoading: true,
           currentMicrophone: snapshot.device,
-          region: regionRef.current,
+          region,
           languages: languageHintsRef.current,
           hasApiKey: true,
         });
         void (async () => {
-          const [settings, resolved, found] = await Promise.all([
-            loadSettings(),
-            resolveRegion(),
-            listMicrophones().catch(() => [] as Microphone[]),
-          ]);
-          if (epoch !== overlayEpochRef.current) return;
-          const key = await loadApiKey(resolved);
+          const microphonesLoad = listMicrophones().catch(() => [] as Microphone[]);
+          const settings = await loadSettings();
+          const resolved = resolveRegion(settings);
+          const [key, found] = await Promise.all([loadApiKey(resolved), microphonesLoad]);
           if (epoch !== overlayEpochRef.current) return;
           setOverlay({
             kind: "settings",
@@ -390,159 +346,68 @@ export function LiveApp() {
         })();
       }}
       onPickMicrophone={(name) => {
-        overlayEpochRef.current += 1;
-        setOverlay(CLOSED_OVERLAY);
+        closeOverlay();
         void controllerRef.current?.switchMicrophone(name);
       }}
-      onCloseMicrophones={() => {
-        overlayEpochRef.current += 1;
-        setOverlay(CLOSED_OVERLAY);
-      }}
-      onCloseSettings={() => {
-        overlayEpochRef.current += 1;
-        setOverlay(CLOSED_OVERLAY);
-      }}
+      onCloseOverlay={closeOverlay}
       onSettingsPickMicrophone={(name) => {
         void controllerRef.current
           ?.switchMicrophone(name)
-          .then(() => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  currentMicrophone: name,
-                  notice: `Microphone set to ${name}`,
-                },
-              }),
-            );
-          })
-          .catch((error: unknown) => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  notice: `Failed to set microphone: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`,
-                },
-              }),
-            );
-          });
+          .then(() =>
+            patchSettings({ currentMicrophone: name, notice: `Microphone set to ${name}` }),
+          )
+          .catch(failSettings("set microphone"));
       }}
       onSettingsPickLanguages={(codes) => {
-        languageHintsRef.current = normalizeLanguageHints(codes);
+        languageHintsRef.current = codes;
         void controllerRef.current
           ?.setLanguageHints(codes)
-          .then(() => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  languages: languageHintsRef.current,
-                  notice: `Languages set to ${languageHintLabel(languageHintsRef.current)}`,
-                },
-              }),
-            );
-          })
-          .catch((error: unknown) => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  languages: languageHintsRef.current,
-                  notice: `Failed to set languages: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`,
-                },
-              }),
-            );
-          });
+          .then(() =>
+            patchSettings({
+              languages: codes,
+              notice: `Languages set to ${languageHintLabel(codes)}`,
+            }),
+          )
+          .catch((error: unknown) =>
+            patchSettings({
+              languages: codes,
+              notice: `Failed to set languages: ${errorMessage(error)}`,
+            }),
+          );
       }}
       onSettingsPickRegion={(next) => {
         void saveSettings({ region: next })
           .then(async () => {
             const key = await loadApiKey(next);
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  region: next,
-                  hasApiKey: key !== null,
-                  notice: `Region set to ${regionLabel(next)} — applies after restart${
-                    key === null ? " (register an API key for this region)" : ""
-                  }`,
-                },
-              }),
-            );
+            patchSettings({
+              region: next,
+              hasApiKey: key !== null,
+              notice: `Region set to ${regionLabel(next)} (applies after restart${
+                key === null ? ", register an API key for this region" : ""
+              })`,
+            });
           })
-          .catch((error: unknown) => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  notice: `Failed to save region: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`,
-                },
-              }),
-            );
-          });
+          .catch(failSettings("save region"));
       }}
       onSettingsChangeApiKey={(key) => {
-        const region =
-          overlay.kind === "settings" ? (overlay.region ?? regionRef.current) : regionRef.current;
-        void saveApiKey({ key, region })
-          .then(() => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  hasApiKey: true,
-                  notice: `Saved API key for ${regionLabel(region)} — applies after restart`,
-                },
-              }),
-            );
-          })
-          .catch((error: unknown) => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  notice: `Failed to save API key: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`,
-                },
-              }),
-            );
-          });
+        void saveApiKey({ key, region: overlayRegion })
+          .then(() =>
+            patchSettings({
+              hasApiKey: true,
+              notice: `Saved API key for ${regionLabel(overlayRegion)} (applies after restart)`,
+            }),
+          )
+          .catch(failSettings("save API key"));
       }}
       onSettingsDeleteApiKey={() => {
-        const region =
-          overlay.kind === "settings" ? (overlay.region ?? regionRef.current) : regionRef.current;
-        void deleteApiKey(region)
-          .then(() => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  hasApiKey: false,
-                  notice: `Deleted API key for ${regionLabel(region)} — applies after restart`,
-                },
-              }),
-            );
-          })
-          .catch((error: unknown) => {
-            setOverlay((prev) =>
-              patchSettingsOverlay({
-                prev,
-                patch: {
-                  notice: `Failed to delete API key: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`,
-                },
-              }),
-            );
-          });
+        void deleteApiKey(overlayRegion)
+          .then(() =>
+            patchSettings({
+              hasApiKey: false,
+              notice: `Deleted API key for ${regionLabel(overlayRegion)} (applies after restart)`,
+            }),
+          )
+          .catch(failSettings("delete API key"));
       }}
     />
   );

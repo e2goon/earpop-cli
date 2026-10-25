@@ -1,51 +1,38 @@
-import { spawn } from "node:child_process";
-
-import { resolveCaptureBin } from "#/lib/capture-bin.js";
-import { captureSpawnEnv, stopCaptureChild } from "#/lib/capture-process.js";
-import type { AudioCapture, AudioOptions } from "#/lib/types";
+import { spawnCapture, spawnFailureMessage, stopCaptureChild } from "#/lib/capture-process.js";
+import type { AudioCapture, AudioOptions } from "#/lib/types.js";
 
 // 100ms × 16kHz × 2 bytes (s16le) — same as desktop / earpop-capture.
 const FRAME_BYTES = 3200;
 
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
 const TERM_GRACE_MS = 2_000;
+const STDERR_KEEP_CHARS = 4_096;
 
 function micPermissionHint() {
   if (process.platform === "darwin") {
-    return "allow this terminal app under System Settings > Privacy & Security > Microphone";
+    return "Allow this terminal app under System Settings > Privacy & Security > Microphone";
   }
   if (process.platform === "win32") {
-    return "allow microphone access in Windows Settings > Privacy & security > Microphone";
+    return "Allow microphone access in Windows Settings > Privacy & security > Microphone";
   }
   if (process.platform === "linux") {
-    return "check microphone permissions and that ALSA/PipeWire can open the device";
+    return "Check microphone permissions and that ALSA/PipeWire can open the device";
   }
-  return "check microphone permissions";
+  return "Check microphone permissions";
 }
 
-function captureErrorMessage({ code, stderr }: { code: number | null; stderr: string }) {
-  const detail = stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${code ?? "unknown"}`;
-  return `Cannot use microphone: ${detail} — ${micPermissionHint()}`;
+function captureDetail({ code, stderr }: { code: number | null; stderr: string }) {
+  return stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${code ?? "unknown"}`;
 }
 
-export function startCapture({ device: deviceOption, onFrame, onError }: AudioOptions) {
-  const device = deviceOption ?? "default";
+export function startCapture({ device, onFrame, onError }: AudioOptions) {
   return new Promise<AudioCapture>((resolve, reject) => {
-    const bin = resolveCaptureBin();
-    if (!bin.ok) {
-      reject(new Error(bin.message));
-      return;
-    }
-
     const args = ["capture"];
     if (device !== "default") {
       args.push("--device", device);
     }
 
-    const child = spawn(bin.path, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: captureSpawnEnv(),
-    });
+    const child = spawnCapture(args);
 
     let settled = false;
     let stopped = false;
@@ -68,23 +55,19 @@ export function startCapture({ device: deviceOption, onFrame, onError }: AudioOp
     );
 
     child.on("error", (error: NodeJS.ErrnoException) => {
-      fail(
-        error.code === "ENOENT"
-          ? `Failed to run capture helper: ${bin.path}`
-          : `Failed to run capture helper: ${error.message}`,
-      );
+      fail(spawnFailureMessage({ child, error }));
     });
 
     child.on("close", (code) => {
       if (!settled) {
-        fail(captureErrorMessage({ code, stderr }));
+        fail(`Cannot use microphone (${captureDetail({ code, stderr })}). ${micPermissionHint()}`);
         return;
       }
-      if (!stopped) onError(captureErrorMessage({ code, stderr }));
+      if (!stopped) onError(`Microphone stopped (${captureDetail({ code, stderr })})`);
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = (stderr + chunk.toString()).slice(-STDERR_KEEP_CHARS);
     });
 
     child.stdout.on("data", (chunk: Buffer) => {

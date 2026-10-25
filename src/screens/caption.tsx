@@ -1,44 +1,47 @@
 import { Spinner } from "@inkjs/ui";
-import { Text, useInput, useStdout, Box } from "ink";
-import { useState } from "react";
+import { Text, useBoxMetrics, useInput, useWindowSize, Box, type DOMElement } from "ink";
+import { useEffect, useMemo, useRef, useState } from "react";
+import stringWidth from "string-width";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { shortPath } from "#/lib/clipboard.js";
 import type { SttLanguage } from "#/lib/languages.js";
 import type { Microphone, SttRegion, SttState, Token } from "#/lib/types.js";
-import { SettingsScreen } from "#/screens/settings.js";
+import { SettingsScreen, type SettingsScreenProps } from "#/screens/settings.js";
 
 export type CaptionOverlay =
   | { kind: "none" }
   | { kind: "mic"; microphones: Microphone[]; loading: boolean; error?: string }
-  | {
-      kind: "settings";
-      microphones: Microphone[];
-      microphonesLoading: boolean;
-      currentMicrophone?: string;
-      region?: SttRegion;
-      languages: SttLanguage[];
-      hasApiKey: boolean;
-      notice?: string;
-    };
+  | ({ kind: "settings" } & Pick<
+      SettingsScreenProps,
+      | "microphones"
+      | "microphonesLoading"
+      | "currentMicrophone"
+      | "region"
+      | "languages"
+      | "hasApiKey"
+      | "notice"
+    >);
 
-export interface CaptionScreenProps {
+interface CaptionScreenProps {
   state: SttState;
   stateMessage?: string;
+  notice?: string;
   device: string;
   finalTokens: Token[];
   pendingTokens: Token[];
   elapsedSeconds: number;
   overlay: CaptionOverlay;
+  getHistory: () => Token[];
   journalPath?: string;
   ended?: boolean;
+  finishing?: boolean;
   onTogglePause: () => void;
   onQuit: () => void;
   onOpenMicrophones: () => void;
   onOpenSettings: () => void;
   onPickMicrophone: (name: string) => void;
-  onCloseMicrophones: () => void;
-  onCloseSettings: () => void;
+  onCloseOverlay: () => void;
   onSettingsPickMicrophone: (name: string) => void;
   onSettingsPickLanguages: (codes: SttLanguage[]) => void;
   onSettingsPickRegion: (region: SttRegion) => void;
@@ -47,8 +50,8 @@ export interface CaptionScreenProps {
 }
 
 const CAPTION_LINE_COUNT = 6;
+const END_CONFIRM_MS = 2_000;
 const CAPTION_TAIL_CHARS = 1200;
-const FALLBACK_COLUMNS = 80;
 
 /** Fixed palette for speaker tags S1–S9 (Ink named colors). */
 const SPEAKER_COLORS = [
@@ -78,59 +81,30 @@ interface Piece {
   tag?: boolean;
 }
 
-function speakerColor(speaker: string): SpeakerColor | undefined {
+function speakerColor(speaker: string) {
   const index = Number(speaker);
   if (!Number.isInteger(index) || index < 1 || index > 9) return undefined;
   return SPEAKER_COLORS[index - 1];
 }
 
-// CJK / fullwidth glyphs take two terminal columns; ignore that and lines wrap wrong.
-function charWidth(code: number) {
-  if (
-    (code >= 0x1100 && code <= 0x115f) ||
-    (code >= 0x2e80 && code <= 0xa4cf) ||
-    (code >= 0xac00 && code <= 0xd7a3) ||
-    (code >= 0xf900 && code <= 0xfaff) ||
-    (code >= 0xfe30 && code <= 0xfe4f) ||
-    (code >= 0xff00 && code <= 0xff60) ||
-    (code >= 0xffe0 && code <= 0xffe6) ||
-    (code >= 0x20000 && code <= 0x3fffd)
-  ) {
-    return 2;
-  }
-  return 1;
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function graphemes(text: string) {
+  return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
 }
 
-function stringWidth(text: string) {
-  let width = 0;
-  for (const char of text) {
-    width += charWidth(char.codePointAt(0) ?? 0);
-  }
-  return width;
+function sortSpeakerIds(ids: Iterable<string>) {
+  return [...ids].sort((a, b) => Number(a) - Number(b));
 }
 
-function speakerAllowed({
-  speaker,
-  focusedSpeakers,
-}: {
-  speaker: string | undefined;
-  focusedSpeakers: ReadonlySet<string>;
-}) {
-  if (focusedSpeakers.size === 0) return true;
-  return speaker !== undefined && focusedSpeakers.has(speaker);
-}
-
-function formatFocusLabel(focusedSpeakers: ReadonlySet<string>) {
-  if (focusedSpeakers.size === 0) return undefined;
-  return [...focusedSpeakers].sort((a, b) => Number(a) - Number(b));
-}
-
-function heardSpeakerIds(tokens: Token[]) {
+function heardSpeakerIds(tokenLists: Token[][]) {
   const heard = new Set<string>();
-  for (const token of tokens) {
-    if (token.speaker !== undefined) heard.add(token.speaker);
+  for (const tokens of tokenLists) {
+    for (const token of tokens) {
+      if (token.speaker !== undefined) heard.add(token.speaker);
+    }
   }
-  return [...heard].sort((a, b) => Number(a) - Number(b));
+  return sortSpeakerIds(heard);
 }
 
 function formatSpeakerIds(ids: string[]) {
@@ -152,10 +126,12 @@ function toLines({
   finalTokens,
   pendingTokens,
   focusedSpeakers,
+  tailChars,
 }: {
   finalTokens: Token[];
   pendingTokens: Token[];
   focusedSpeakers: ReadonlySet<string>;
+  tailChars: number;
 }) {
   const lines: Utterance[] = [];
   let speaker: string | undefined;
@@ -172,25 +148,26 @@ function toLines({
   };
 
   const eat = ({ token, pending }: { token: Token; pending: boolean }) => {
-    if (!speakerAllowed({ speaker: token.speaker, focusedSpeakers })) return;
-    const next = token.speaker;
-    if ((closed || (next !== undefined && next !== speaker)) && (stable !== "" || tail !== "")) {
-      push();
+    if (
+      focusedSpeakers.size > 0 &&
+      (token.speaker === undefined || !focusedSpeakers.has(token.speaker))
+    ) {
+      return;
     }
+    const next = token.speaker;
+    if (closed || (next !== undefined && next !== speaker)) push();
     if (next !== undefined) speaker = next;
     if (pending) tail += token.text;
     else stable += token.text;
     closed = endsSentence(token.text);
   };
 
-  const finalTail: Token[] = [];
-  let used = 0;
-  for (let i = finalTokens.length - 1; i >= 0 && used < CAPTION_TAIL_CHARS; i -= 1) {
-    finalTail.unshift(finalTokens[i]!);
-    used += finalTokens[i]!.text.length;
+  let start = finalTokens.length;
+  for (let used = 0; start > 0 && used < tailChars; start -= 1) {
+    used += finalTokens[start - 1]!.text.length;
   }
-  for (const token of finalTail) {
-    eat({ token, pending: false });
+  for (let i = start; i < finalTokens.length; i += 1) {
+    eat({ token: finalTokens[i]!, pending: false });
   }
   for (const token of pendingTokens) {
     eat({ token, pending: true });
@@ -216,22 +193,23 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
     }
   };
 
-  const appendPiece = (piece: Piece) => {
+  const appendPiece = ({ piece, pieceWidth }: { piece: Piece; pieceWidth: number }) => {
     line.push(piece);
-    lineWidth += stringWidth(piece.text);
+    lineWidth += pieceWidth;
   };
 
   const appendText = ({
     text,
-    dim,
-    color,
+    textWidth,
+    piece,
   }: {
     text: string;
-    dim: boolean;
-    color?: SpeakerColor;
+    textWidth: number;
+    piece: Piece;
   }) => {
-    if (text.length === 0) return;
-    appendPiece({ text, dim, ...(color !== undefined ? { color } : {}) });
+    if (text.length > 0) {
+      appendPiece({ piece: { text, dim: piece.dim, color: piece.color }, pieceWidth: textWidth });
+    }
   };
 
   const atLineStart = () => {
@@ -241,7 +219,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
 
   for (const piece of pieces) {
     if (piece.tag === true) {
-      appendPiece(piece);
+      appendPiece({ piece, pieceWidth: stringWidth(piece.text) });
       continue;
     }
 
@@ -255,10 +233,10 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
         newLine(true);
         let chunk = "";
         let chunkWidth = 0;
-        for (const char of unit) {
-          const charWidthValue = charWidth(char.codePointAt(0) ?? 0);
+        for (const char of graphemes(unit)) {
+          const charWidthValue = stringWidth(char);
           if (lineWidth + chunkWidth + charWidthValue > width) {
-            appendText({ text: chunk, dim: piece.dim, color: piece.color });
+            appendText({ text: chunk, textWidth: chunkWidth, piece });
             newLine(true);
             chunk = "";
             chunkWidth = 0;
@@ -266,7 +244,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
           chunk += char;
           chunkWidth += charWidthValue;
         }
-        appendText({ text: chunk, dim: piece.dim, color: piece.color });
+        appendText({ text: chunk, textWidth: chunkWidth, piece });
         continue;
       }
 
@@ -274,7 +252,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
         newLine(true);
         if (/^\s+$/.test(unit)) continue;
       }
-      appendText({ text: unit, dim: piece.dim, color: piece.color });
+      appendText({ text: unit, textWidth: unitWidth, piece });
     }
   }
   newLine(false);
@@ -290,19 +268,20 @@ function wrapUtterances({
   width: number;
   maxLines: number;
 }) {
-  const rows: { pieces: Piece[]; tag?: Piece }[] = [];
+  const chunks: { pieces: Piece[]; tag?: Piece }[][] = [];
+  let rowCount = 0;
 
-  for (const utterance of utterances) {
+  for (let u = utterances.length - 1; u >= 0 && rowCount < maxLines; u -= 1) {
+    const utterance = utterances[u]!;
     const pieces: Piece[] = [];
     let tag: Piece | undefined;
     let indent = 0;
     if (utterance.speaker !== undefined) {
-      const color = speakerColor(utterance.speaker);
       tag = {
         text: `[S${utterance.speaker}] `,
         dim: false,
         tag: true,
-        ...(color !== undefined ? { color } : {}),
+        color: speakerColor(utterance.speaker),
       };
       indent = stringWidth(tag.text);
       pieces.push(tag);
@@ -312,12 +291,12 @@ function wrapUtterances({
     if (stable.length > 0) pieces.push({ text: stable, dim: false });
     if (pending.length > 0) pieces.push({ text: pending, dim: true });
 
-    for (const wrapped of wrapFlow({ pieces, width, indent })) {
-      rows.push({ pieces: wrapped, tag });
-    }
+    const chunk = wrapFlow({ pieces, width, indent }).map((wrapped) => ({ pieces: wrapped, tag }));
+    chunks.push(chunk);
+    rowCount += chunk.length;
   }
 
-  const kept = rows.slice(-maxLines);
+  const kept = chunks.reverse().flat().slice(-maxLines);
   if (kept.length === 0) return [];
 
   const first = kept[0]!;
@@ -343,11 +322,11 @@ function wrapUtterances({
       remaining -= pieceWidth;
       continue;
     }
-    const chars = [...piece.text];
+    const chars = graphemes(piece.text);
     let start = chars.length;
     let used = 0;
     while (start > 0) {
-      const cw = charWidth(chars[start - 1]!.codePointAt(0) ?? 0);
+      const cw = stringWidth(chars[start - 1]!);
       if (used + cw > remaining) break;
       used += cw;
       start -= 1;
@@ -370,25 +349,35 @@ function formatElapsed(seconds: number) {
 function StatusLine(props: {
   state: SttState;
   stateMessage?: string;
+  notice?: string;
+  device: string;
   elapsedSeconds: number;
-  focusedSpeakers?: string[];
+  focusedSpeakers: string[];
 }) {
   return (
-    <Box width="100%" justifyContent="space-between">
-      <Box>
+    <Box width="100%" justifyContent="space-between" gap={2}>
+      <Box flexShrink={1}>
         <StatusLabel state={props.state} stateMessage={props.stateMessage} />
-        {props.focusedSpeakers !== undefined && props.focusedSpeakers.length > 0 && (
-          <Text dimColor>{` · focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
+        {props.focusedSpeakers.length > 0 && (
+          <Text dimColor>{`  focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
         )}
+        {props.notice !== undefined && <Text color="yellow">{`  ${props.notice}`}</Text>}
       </Box>
-      <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
+      <Box flexShrink={0} gap={2}>
+        {props.device !== "default" && (
+          <Text dimColor wrap="truncate-middle">
+            {props.device}
+          </Text>
+        )}
+        <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
+      </Box>
     </Box>
   );
 }
 
 function StatusLabel(props: { state: SttState; stateMessage?: string }) {
   if (props.state === "connecting") {
-    return <Spinner label="Connecting" />;
+    return <Spinner label={props.stateMessage ?? "Connecting"} />;
   }
   if (props.state === "paused") {
     return (
@@ -416,15 +405,93 @@ function StatusLabel(props: { state: SttState; stateMessage?: string }) {
   return <Text dimColor>Stopped</Text>;
 }
 
+function CaptionRow(props: { line: Piece[] }) {
+  return (
+    <Text>
+      {props.line.map((piece, index) => (
+        <Text key={index} dimColor={piece.dim} color={piece.color}>
+          {piece.text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
 export function CaptionScreen(props: CaptionScreenProps) {
-  const { stdout } = useStdout();
-  const columns = stdout.columns ?? FALLBACK_COLUMNS;
+  const { columns, rows } = useWindowSize();
   const overlayOpen = props.overlay.kind !== "none";
   // Empty set = show all speakers; 1–9 toggles membership, 0 clears.
   const [focusedSpeakers, setFocusedSpeakers] = useState(() => new Set<string>());
+  // null = live view; otherwise finals frozen on entry, scrolled `offset` rows up from the bottom.
+  const [history, setHistory] = useState<{ tokens: Token[]; offset: number } | null>(null);
+  const [confirmingEnd, setConfirmingEnd] = useState(false);
+
+  useEffect(() => {
+    if (!confirmingEnd) return;
+    const timer = setTimeout(() => setConfirmingEnd(false), END_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [confirmingEnd]);
+
+  const { utterances, captionLines } = useMemo(() => {
+    const utterances = toLines({
+      finalTokens: props.finalTokens,
+      pendingTokens: props.pendingTokens,
+      focusedSpeakers,
+      tailChars: CAPTION_TAIL_CHARS,
+    });
+    return {
+      utterances,
+      captionLines: wrapUtterances({ utterances, width: columns, maxLines: CAPTION_LINE_COUNT }),
+    };
+  }, [props.finalTokens, props.pendingTokens, focusedSpeakers, columns]);
+
+  const historyTokens = history?.tokens;
+  const historyRows = useMemo(() => {
+    if (historyTokens === undefined) return [];
+    const utterances = toLines({
+      finalTokens: historyTokens,
+      pendingTokens: [],
+      focusedSpeakers,
+      tailChars: Infinity,
+    });
+    return wrapUtterances({ utterances, width: columns, maxLines: Infinity });
+  }, [historyTokens, focusedSpeakers, columns]);
+
+  const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
+  const historyBoxRef = useRef<DOMElement>(null);
+  const historyBox = useBoxMetrics(historyBoxRef);
+  const historyHeight =
+    historyBox.hasMeasured && historyBox.height > 0
+      ? historyBox.height
+      : Math.max(CAPTION_LINE_COUNT, rows - (showPath ? 3 : 2));
+  const maxOffset = Math.max(0, historyRows.length - historyHeight);
+  const offset = Math.min(history?.offset ?? 0, maxOffset);
+  const top = Math.max(0, historyRows.length - historyHeight - offset);
+  const page = historyHeight - 1;
+
+  const scrollUp = (delta: number) => {
+    if (history === null) {
+      if (delta <= 0) return;
+      const tokens = props.getHistory();
+      if (tokens.length > 0) setHistory({ tokens: tokens.slice(), offset: delta - 1 });
+      return;
+    }
+    const next = offset + delta;
+    setHistory(next < 0 ? null : { ...history, offset: Math.min(next, maxOffset) });
+  };
 
   useInput((input, key) => {
     if (overlayOpen) return;
+
+    if (key.upArrow) return scrollUp(1);
+    if (key.downArrow) return scrollUp(-1);
+    if (key.pageUp) return scrollUp(page);
+    if (key.pageDown) return scrollUp(-page);
+    if (key.home) return scrollUp(Infinity);
+    if (history !== null && (key.end || key.escape)) {
+      setHistory(null);
+      return;
+    }
 
     if (props.ended) {
       if (key.escape) props.onQuit();
@@ -450,43 +517,30 @@ export function CaptionScreen(props: CaptionScreenProps) {
       return;
     }
     if (key.escape) {
-      props.onQuit();
+      if (confirmingEnd) props.onQuit();
+      else setConfirmingEnd(true);
       return;
     }
     if (input === "m") props.onOpenMicrophones();
     if (input === "s") props.onOpenSettings();
   });
 
-  const utterances = toLines({
-    finalTokens: props.finalTokens,
-    pendingTokens: props.pendingTokens,
-    focusedSpeakers,
-  });
-  const captionLines = wrapUtterances({
-    utterances,
-    width: columns,
-    maxLines: CAPTION_LINE_COUNT,
-  });
-  const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
-  const focusedSpeakerIds = formatFocusLabel(focusedSpeakers);
+  const focusedSpeakerIds = sortSpeakerIds(focusedSpeakers);
   const focusEmpty = focusedSpeakers.size > 0 && utterances.length === 0 && !props.ended;
-  const heardIds = heardSpeakerIds([...props.finalTokens, ...props.pendingTokens]);
-  const liveHints =
-    props.state === "paused"
-      ? "p resume · 1-9 speaker · 0 all · m mic · s settings · ESC end"
-      : "p pause · 1-9 speaker · 0 all · m mic · s settings · ESC end";
+  const heardIds = focusEmpty ? heardSpeakerIds([props.finalTokens, props.pendingTokens]) : [];
+  const hints =
+    history !== null
+      ? `History ${top + 1}-${Math.min(top + historyHeight, historyRows.length)}/${historyRows.length}  Up/Down PgUp/PgDn scroll  End live`
+      : props.finishing
+        ? "Saving transcript  ESC force quit"
+        : props.ended
+          ? "Up history  ESC quit"
+          : confirmingEnd
+            ? "Press ESC again to end the session"
+            : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  0 all  Up history  m mic  s settings  ESC end`;
 
   return (
-    <Box flexDirection="column">
-      <StatusLine
-        state={props.ended ? "stopped" : props.state}
-        stateMessage={props.stateMessage}
-        elapsedSeconds={props.elapsedSeconds}
-        focusedSpeakers={focusedSpeakerIds}
-      />
-
-      {showPath && <Text color="yellow">{shortPath(props.journalPath!)} copied to clipboard</Text>}
-
+    <Box flexDirection="column" height={rows} justifyContent="flex-end">
       {props.overlay.kind === "mic" ? (
         <MicrophoneSelect
           microphones={props.overlay.microphones}
@@ -494,56 +548,60 @@ export function CaptionScreen(props: CaptionScreenProps) {
           loading={props.overlay.loading}
           error={props.overlay.error}
           onPick={props.onPickMicrophone}
-          onCancel={props.onCloseMicrophones}
+          onCancel={props.onCloseOverlay}
         />
       ) : props.overlay.kind === "settings" ? (
         <SettingsScreen
-          microphones={props.overlay.microphones}
-          microphonesLoading={props.overlay.microphonesLoading}
-          currentMicrophone={props.overlay.currentMicrophone}
-          region={props.overlay.region}
-          languages={props.overlay.languages}
-          hasApiKey={props.overlay.hasApiKey}
-          notice={props.overlay.notice}
+          {...props.overlay}
           exitLabel="ESC back"
           onPickMicrophone={props.onSettingsPickMicrophone}
           onPickLanguages={props.onSettingsPickLanguages}
           onPickRegion={props.onSettingsPickRegion}
           onChangeApiKey={props.onSettingsChangeApiKey}
           onDeleteApiKey={props.onSettingsDeleteApiKey}
-          onExit={props.onCloseSettings}
+          onExit={props.onCloseOverlay}
         />
+      ) : history !== null ? (
+        <Box
+          ref={historyBoxRef}
+          flexDirection="column"
+          flexGrow={1}
+          flexBasis={0}
+          overflow="hidden"
+          justifyContent="flex-end"
+        >
+          {historyRows.slice(top, top + historyHeight).map((line, index) => (
+            <CaptionRow key={top + index} line={line} />
+          ))}
+        </Box>
       ) : (
         <Box flexDirection="column" height={CAPTION_LINE_COUNT} justifyContent="flex-end">
           {focusEmpty ? (
             <Text dimColor>
-              {`No speech from ${formatSpeakerIds(focusedSpeakerIds ?? [])}${
-                heardIds.length > 0 ? ` · heard ${formatSpeakerIds(heardIds)}` : ""
-              } · 0 show all`}
+              {`No speech from ${formatSpeakerIds(focusedSpeakerIds)}${
+                heardIds.length > 0 ? `, heard ${formatSpeakerIds(heardIds)}` : ""
+              }. Press 0 to show all`}
             </Text>
           ) : (
-            captionLines.map((line, index) => (
-              <Text key={index}>
-                {line.map((piece, pieceIndex) =>
-                  piece.color !== undefined ? (
-                    <Text key={pieceIndex} dimColor={piece.dim} color={piece.color}>
-                      {piece.text}
-                    </Text>
-                  ) : (
-                    <Text key={pieceIndex} dimColor={piece.dim}>
-                      {piece.text}
-                    </Text>
-                  ),
-                )}
-              </Text>
-            ))
+            captionLines.map((line, index) => <CaptionRow key={index} line={line} />)
           )}
         </Box>
       )}
 
+      {showPath && <Text color="yellow">{shortPath(props.journalPath!)} copied to clipboard</Text>}
+      <StatusLine
+        state={props.ended ? "stopped" : props.state}
+        stateMessage={props.stateMessage}
+        notice={props.notice}
+        device={props.device}
+        elapsedSeconds={props.elapsedSeconds}
+        focusedSpeakers={focusedSpeakerIds}
+      />
       {!overlayOpen && (
         <Box width="100%">
-          <Text dimColor>{props.ended ? "ESC quit" : liveHints}</Text>
+          <Text dimColor wrap="truncate-end">
+            {hints}
+          </Text>
         </Box>
       )}
     </Box>

@@ -1,4 +1,7 @@
-import type { SttLanguage } from "#/lib/languages";
+import type { SttLanguage } from "#/lib/languages.js";
+import type { SttRegion } from "#/lib/region.js";
+
+export type { SttRegion };
 
 export interface Token {
   text: string;
@@ -13,8 +16,7 @@ export type SttState = "connecting" | "listening" | "paused" | "stopped" | "erro
 
 export type SttEvent =
   | { type: "state"; state: SttState; message?: string; retryable?: boolean }
-  | { type: "tokens"; final: Token[]; pending: Token[] }
-  | { type: "finished" };
+  | { type: "tokens"; final: Token[]; pending: Token[] };
 
 export interface SttSession {
   sendAudio(frame: Buffer): void;
@@ -23,7 +25,6 @@ export interface SttSession {
 
 export interface SttOptions {
   apiKey: string;
-  model?: string;
   region?: SttRegion;
   languageHints?: SttLanguage[];
   clientReferenceId?: string;
@@ -31,8 +32,6 @@ export interface SttOptions {
   contextText?: string;
   onEvent: (event: SttEvent) => void;
 }
-
-export type SttRegion = "us" | "eu" | "jp";
 
 export interface Microphone {
   name: string;
@@ -45,7 +44,7 @@ export interface AudioCapture {
 }
 
 export interface AudioOptions {
-  device?: string;
+  device: string;
   onFrame: (frame: Buffer) => void;
   onError: (message: string) => void;
 }
@@ -53,8 +52,9 @@ export interface AudioOptions {
 export interface Journal {
   id: string;
   path: string;
-  session(device: string): void;
-  tokens(tokens: Token[]): void;
+  /** Records the device and returns the session start offset for token timestamps. */
+  session(device: string): number;
+  tokens(args: { tokens: Token[]; offsetMs: number }): void;
   close(): void;
 }
 

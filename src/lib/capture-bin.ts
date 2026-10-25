@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import platforms from "#/lib/capture-platforms.json";
 import integrity from "#/lib/capture-integrity.json";
@@ -15,10 +14,7 @@ const PLATFORM_UNSUPPORTED =
 
 type CapturePlatform = (typeof platforms)[number];
 type IntegrityMap = Record<string, string>;
-
-function platformCapture(): CapturePlatform | null {
-  return platforms.find((p) => p.os === process.platform && p.cpu === process.arch) ?? null;
-}
+type CaptureBin = { ok: true; path: string } | { ok: false; message: string };
 
 function looksLikePackageRoot(dir: string) {
   if (existsSync(join(dir, "Cargo.toml")) && existsSync(join(dir, "crates"))) {
@@ -35,7 +31,7 @@ function looksLikePackageRoot(dir: string) {
 }
 
 function packageRoot() {
-  let dir = dirname(fileURLToPath(import.meta.url));
+  let dir = import.meta.dirname;
   while (!looksLikePackageRoot(dir)) {
     const parent = dirname(dir);
     if (parent === dir) break;
@@ -44,36 +40,25 @@ function packageRoot() {
   return dir;
 }
 
-function releaseBinName() {
-  return process.platform === "win32" ? "earpop-capture.exe" : "earpop-capture";
-}
-
-function sha256File(path: string) {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
-function verifyIntegrity({ package: pkgName, path }: { package: string; path: string }) {
-  if (process.env.EARPOP_SKIP_CAPTURE_INTEGRITY === "1") {
-    return { ok: true as const };
-  }
+function integrityFailure({ package: pkgName, path }: { package: string; path: string }) {
+  if (process.env.EARPOP_SKIP_CAPTURE_INTEGRITY === "1") return null;
   const expected = (integrity as IntegrityMap)[pkgName];
-  if (expected === undefined || expected.length === 0) {
-    // Empty map in-repo until the first publish fills hashes.
-    return { ok: true as const };
-  }
-  const actual = sha256File(path);
-  if (actual !== expected) {
-    return {
-      ok: false as const,
-      message: `Capture helper integrity check failed for ${pkgName}. Reinstall earpop-cli or set EARPOP_SKIP_CAPTURE_INTEGRITY=1 only for local builds.`,
-    };
-  }
-  return { ok: true as const };
+  // Empty map in-repo until the first publish fills hashes.
+  if (expected === undefined || expected.length === 0) return null;
+  const actual = createHash("sha256").update(readFileSync(path)).digest("hex");
+  if (actual === expected) return null;
+  return `Capture helper integrity check failed for ${pkgName}. Reinstall earpop-cli or set EARPOP_SKIP_CAPTURE_INTEGRITY=1 only for local builds.`;
 }
 
-function resolveOptionalPackageBin({ package: pkgName, bin }: CapturePlatform) {
+function resolveOptionalPackageBin({
+  root,
+  platform: { package: pkgName, bin },
+}: {
+  root: string;
+  platform: CapturePlatform;
+}) {
   try {
-    const require = createRequire(join(packageRoot(), "package.json"));
+    const require = createRequire(join(root, "package.json"));
     const pkgJson = require.resolve(`${pkgName}/package.json`);
     const path = join(dirname(pkgJson), "bin", bin);
     if (existsSync(path)) return path;
@@ -83,46 +68,58 @@ function resolveOptionalPackageBin({ package: pkgName, bin }: CapturePlatform) {
   return null;
 }
 
-function resolveWorkspaceBin({ package: pkgName, bin }: CapturePlatform) {
-  const path = join(packageRoot(), "npm", pkgName, "bin", bin);
+function resolveWorkspaceBin({
+  root,
+  platform: { package: pkgName, bin },
+}: {
+  root: string;
+  platform: CapturePlatform;
+}) {
+  const path = join(root, "npm", pkgName, "bin", bin);
   return existsSync(path) ? path : null;
 }
 
-/** Absolute path to the capture sidecar, or a user-facing error string. */
-export function resolveCaptureBin() {
+function resolveUncached(): CaptureBin {
   const fromEnv = process.env.EARPOP_CAPTURE_BIN?.trim();
   if (fromEnv) {
     if (!existsSync(fromEnv)) {
-      return { ok: false as const, message: `EARPOP_CAPTURE_BIN not found: ${fromEnv}` };
+      return { ok: false, message: `EARPOP_CAPTURE_BIN not found: ${fromEnv}` };
     }
     // Dev override — skip release integrity map.
-    return { ok: true as const, path: fromEnv };
+    return { ok: true, path: fromEnv };
   }
 
   const root = packageRoot();
-  const release = join(root, "target", "release", releaseBinName());
+  const release = join(
+    root,
+    "target",
+    "release",
+    process.platform === "win32" ? "earpop-capture.exe" : "earpop-capture",
+  );
   if (existsSync(release)) {
-    return { ok: true as const, path: release };
+    return { ok: true, path: release };
   }
 
-  const platform = platformCapture();
-  if (platform === null) {
-    return { ok: false as const, message: PLATFORM_UNSUPPORTED };
+  const platform = platforms.find((p) => p.os === process.platform && p.cpu === process.arch);
+  if (platform === undefined) {
+    return { ok: false, message: PLATFORM_UNSUPPORTED };
   }
 
-  const fromOptional = resolveOptionalPackageBin(platform);
-  if (fromOptional) {
-    const check = verifyIntegrity({ package: platform.package, path: fromOptional });
-    if (!check.ok) return check;
-    return { ok: true as const, path: fromOptional };
+  const found =
+    resolveOptionalPackageBin({ root, platform }) ?? resolveWorkspaceBin({ root, platform });
+  if (found === null) {
+    return { ok: false, message: CAPTURE_MISSING };
   }
+  const failure = integrityFailure({ package: platform.package, path: found });
+  return failure === null ? { ok: true, path: found } : { ok: false, message: failure };
+}
 
-  const fromWorkspace = resolveWorkspaceBin(platform);
-  if (fromWorkspace) {
-    const check = verifyIntegrity({ package: platform.package, path: fromWorkspace });
-    if (!check.ok) return check;
-    return { ok: true as const, path: fromWorkspace };
-  }
+let found: CaptureBin | null = null;
 
-  return { ok: false as const, message: CAPTURE_MISSING };
+/** Absolute path to the capture sidecar, or a user-facing error string. */
+export function resolveCaptureBin() {
+  if (found !== null) return found;
+  const result = resolveUncached();
+  if (result.ok) found = result;
+  return result;
 }

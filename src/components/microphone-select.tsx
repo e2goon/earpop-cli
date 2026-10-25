@@ -1,9 +1,10 @@
-import { Select, Spinner } from "@inkjs/ui";
+import { Spinner } from "@inkjs/ui";
 import { Box, Text, useInput } from "ink";
 
+import { Select } from "#/components/select.js";
 import type { Microphone } from "#/lib/types.js";
 
-export interface MicrophoneSelectProps {
+interface MicrophoneSelectProps {
   microphones: Microphone[];
   current?: string;
   loading: boolean;
@@ -39,17 +40,17 @@ export function MicrophoneSelect(props: MicrophoneSelectProps) {
     );
   }
 
-  const options = props.microphones.map((microphone) => ({
-    label: microphone.name + (microphone.isDefault ? " (default)" : ""),
-    value: microphone.name,
-  }));
-
   return (
     <Box flexDirection="column" gap={1}>
       <Select
-        options={options}
-        defaultValue={props.current}
-        onChange={(name) => props.onPick(name)}
+        options={props.microphones.map((microphone) => ({
+          label:
+            microphone.name +
+            (microphone.isDefault ? " (default)" : "") +
+            (microphone.name === props.current ? " (current)" : ""),
+          value: microphone.name,
+        }))}
+        onChange={props.onPick}
       />
       {props.onCancel && <Text dimColor>ESC cancel</Text>}
     </Box>

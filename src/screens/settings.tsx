@@ -1,10 +1,12 @@
-import { PasswordInput, Select } from "@inkjs/ui";
+import { ConfirmInput, PasswordInput } from "@inkjs/ui";
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 
 import { LanguageSelect } from "#/components/language-select.js";
 import { MicrophoneSelect } from "#/components/microphone-select.js";
+import { Select } from "#/components/select.js";
 import { languageHintLabel, type SttLanguage } from "#/lib/languages.js";
+import { DEFAULT_REGION, REGIONS } from "#/lib/region.js";
 import type { Microphone, SttRegion } from "#/lib/types.js";
 
 export interface SettingsScreenProps {
@@ -18,7 +20,7 @@ export interface SettingsScreenProps {
   /** Footer hint for ESC on the menu. Default: "ESC exit". */
   exitLabel?: string;
   onPickMicrophone: (name: string) => void;
-  onPickRegion?: (region: SttRegion) => void;
+  onPickRegion: (region: SttRegion) => void;
   onPickLanguages: (codes: SttLanguage[]) => void;
   onChangeApiKey: (key: string) => void;
   onDeleteApiKey: () => void;
@@ -31,10 +33,14 @@ type View = "menu" | Exclude<MenuItem, "exit"> | "api-key-delete-confirm";
 export function SettingsScreen(props: SettingsScreenProps) {
   const [view, setView] = useState<View>("menu");
 
-  const options = buildMenuOptions({
-    hasApiKey: props.hasApiKey,
-    hasRegion: props.onPickRegion !== undefined,
-  });
+  const options: Array<{ label: string; value: MenuItem }> = [
+    { label: "Choose microphone", value: "microphone" },
+    { label: "Choose languages", value: "languages" },
+    { label: "Choose region", value: "region" },
+    { label: "Change API key", value: "api-key" },
+    ...(props.hasApiKey ? [{ label: "Delete API key", value: "api-key-delete" as const }] : []),
+    { label: "Exit", value: "exit" },
+  ];
 
   useInput((_input, key) => {
     if (!key.escape) return;
@@ -96,19 +102,12 @@ export function SettingsScreen(props: SettingsScreenProps) {
             Pick the region for transcription requests (must match the project that issued your key)
           </Text>
           <Select
-            options={[
-              {
-                label: `United States (us)${(props.region ?? "us") === "us" ? " ✔ current" : ""}`,
-                value: "us",
-              },
-              { label: `Europe (eu)${props.region === "eu" ? " ✔ current" : ""}`, value: "eu" },
-              {
-                label: `Japan / Tokyo (jp)${props.region === "jp" ? " ✔ current" : ""}`,
-                value: "jp",
-              },
-            ]}
+            options={REGIONS.map((region) => ({
+              label: `${region.option}${(props.region ?? DEFAULT_REGION) === region.code ? " ✔ current" : ""}`,
+              value: region.code,
+            }))}
             onChange={(value) => {
-              props.onPickRegion?.(value as SttRegion);
+              props.onPickRegion(value as SttRegion);
               setView("menu");
             }}
           />
@@ -129,40 +128,20 @@ export function SettingsScreen(props: SettingsScreenProps) {
       )}
 
       {view === "api-key-delete-confirm" && (
-        <DeleteConfirm
-          onConfirm={() => {
-            props.onDeleteApiKey();
-            setView("menu");
-          }}
-          onCancel={() => setView("menu")}
-        />
+        <Box gap={1}>
+          <Text color="red">
+            Delete the saved API key? You will need to enter it again next run
+          </Text>
+          <ConfirmInput
+            defaultChoice="cancel"
+            onConfirm={() => {
+              props.onDeleteApiKey();
+              setView("menu");
+            }}
+            onCancel={() => setView("menu")}
+          />
+        </Box>
       )}
     </Box>
-  );
-}
-
-function buildMenuOptions({ hasApiKey, hasRegion }: { hasApiKey: boolean; hasRegion: boolean }) {
-  const menuOptions: Array<{ label: string; value: MenuItem }> = [
-    { label: "Choose microphone", value: "microphone" },
-    { label: "Choose languages", value: "languages" },
-    ...(hasRegion ? [{ label: "Choose region", value: "region" as MenuItem }] : []),
-    { label: "Change API key", value: "api-key" },
-  ];
-  if (hasApiKey) {
-    menuOptions.push({ label: "Delete API key", value: "api-key-delete" });
-  }
-  menuOptions.push({ label: "Exit", value: "exit" });
-  return menuOptions;
-}
-
-function DeleteConfirm(props: { onConfirm: () => void; onCancel: () => void }) {
-  useInput((input) => {
-    if (input === "y") props.onConfirm();
-    if (input === "n") props.onCancel();
-  });
-  return (
-    <Text color="red">
-      Delete the saved API key? You will need to enter it again next run (y/n)
-    </Text>
   );
 }

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { basename } from "node:path";
 
 // Sync spawn: async would be killed by process.exit(0) before the copy finishes.
 const CANDIDATES: Array<{ command: string; args: string[] }> = [
@@ -9,11 +10,10 @@ const CANDIDATES: Array<{ command: string; args: string[] }> = [
 ];
 
 export function shortPath(path: string) {
-  const base = path.split("/").pop() ?? path;
-  return `[…/${base}]`;
+  return basename(path);
 }
 
-export function copyToClipboard(text: string) {
+function copyToClipboard(text: string) {
   for (const candidate of CANDIDATES) {
     try {
       const result = spawnSync(candidate.command, candidate.args, {
@@ -27,6 +27,8 @@ export function copyToClipboard(text: string) {
   return false;
 }
 
-export function osc52Sequence(text: string) {
-  return `\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`;
+export function copyWithFallback(text: string) {
+  if (copyToClipboard(text)) return true;
+  process.stdout.write(`\x1b]52;c;${Buffer.from(text, "utf8").toString("base64")}\x07`);
+  return false;
 }
