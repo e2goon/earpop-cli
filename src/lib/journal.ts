@@ -57,8 +57,6 @@ class FileJournal implements Journal {
   private handle: number | null = null;
   private closed = false;
 
-  private sessionOffsetMs = 0;
-
   private warnedWriteFailure = false;
 
   public constructor({
@@ -77,17 +75,18 @@ class FileJournal implements Journal {
   }
 
   public session(device: string) {
-    this.sessionOffsetMs = Date.now() - this.startedAtMs;
-    this.write(JSON.stringify({ kind: "session", at_ms: this.sessionOffsetMs, device }) + "\n");
+    const atMs = Date.now() - this.startedAtMs;
+    this.write(JSON.stringify({ kind: "session", at_ms: atMs, device }) + "\n");
+    return atMs;
   }
 
-  public tokens(tokens: Token[]) {
+  public tokens({ tokens, offsetMs }: { tokens: Token[]; offsetMs: number }) {
     // Missing end_ms must fall back to atMs (not 0) or the reader timeline inverts.
     const fallbackMs = Date.now() - this.startedAtMs;
     let lines = "";
     for (const token of tokens) {
-      const atMs = token.startMs !== undefined ? this.sessionOffsetMs + token.startMs : fallbackMs;
-      const endMs = token.endMs !== undefined ? this.sessionOffsetMs + token.endMs : atMs;
+      const atMs = token.startMs !== undefined ? offsetMs + token.startMs : fallbackMs;
+      const endMs = token.endMs !== undefined ? offsetMs + token.endMs : atMs;
       lines +=
         JSON.stringify({
           kind: "token",

@@ -165,6 +165,7 @@ export function createTranscription({
     if (stopped || paused || connecting) return;
     connecting = true;
     const generation = ++connectGeneration;
+    let offsetMs = 0;
     state = "connecting";
     stateMessage = undefined;
     emit(true);
@@ -177,14 +178,28 @@ export function createTranscription({
         languageHints,
         contextText: speechContext,
         onEvent: (event) => {
-          if (stopped || generation !== connectGeneration) return;
+          if (stopped) return;
+          if (event.type === "tokens") {
+            if (event.final.length > 0) {
+              journal.tokens({ tokens: event.final, offsetMs });
+              history.push(...event.final);
+              pushTail(event.final);
+              speechContext = appendSttContext({ text: speechContext, tokens: event.final });
+            }
+            // A replaced session still delivers its last finals; only the current one owns the provisional line.
+            if (generation === connectGeneration) pendingTokens = event.pending;
+            // Captions first: do not coalesce provisional tokens behind the paint interval.
+            emit(true);
+            return;
+          }
+          if (generation !== connectGeneration) return;
           if (event.type === "state") {
             if (event.state === "listening") {
               connecting = false;
               listeningSinceMs = Date.now();
               state = "listening";
               stateMessage = undefined;
-              journal.session(device);
+              offsetMs = journal.session(device);
             } else if (event.state === "error") {
               if (event.retryable === true) {
                 scheduleReconnect(event.message ?? "Connection error");
@@ -196,16 +211,6 @@ export function createTranscription({
                 onFatal(event.message ?? "Cannot continue transcription");
               }
             }
-            emit(true);
-          } else if (event.type === "tokens") {
-            if (event.final.length > 0) {
-              journal.tokens(event.final);
-              history.push(...event.final);
-              pushTail(event.final);
-              speechContext = appendSttContext({ text: speechContext, tokens: event.final });
-            }
-            pendingTokens = event.pending;
-            // Captions first: do not coalesce provisional tokens behind the paint interval.
             emit(true);
           }
         },
@@ -252,6 +257,12 @@ export function createTranscription({
     });
   }
 
+  function releaseSession() {
+    const closing = session;
+    session = null;
+    void closing?.stop().catch(() => {});
+  }
+
   async function teardownIO() {
     try {
       await capture?.stop();
@@ -290,14 +301,21 @@ export function createTranscription({
           state = "paused";
           pendingTokens = [];
           clearTimers();
-          await teardownIO();
           emit(true);
+          releaseSession();
+          try {
+            await capture?.stop();
+          } catch {}
+          capture = null;
           return;
         }
 
         paused = false;
         pausedTotalMs += Date.now() - pausedAtMs;
         pausedAtMs = 0;
+        state = "connecting";
+        stateMessage = undefined;
+        emit(true);
         try {
           capture = await openCapture(device);
         } catch (error) {
@@ -306,9 +324,7 @@ export function createTranscription({
           emit(true);
           return;
         }
-        stateMessage = undefined;
         startElapsedTimer();
-        emit(true);
         await connect();
       });
     },
@@ -375,12 +391,7 @@ export function createTranscription({
         // Invalidate any in-flight connect() before opening a replacement session.
         connectGeneration += 1;
         connecting = false;
-        try {
-          await session?.stop();
-        } catch {
-          // Soft reconnect: drop the old socket even if stop fails.
-        }
-        session = null;
+        releaseSession();
         emit(true);
         await connect();
       });
@@ -389,11 +400,12 @@ export function createTranscription({
     stop() {
       return enqueue(async () => {
         if (stopped) return;
-        stopped = true;
         connectGeneration += 1;
         clearTimers();
 
+        // Not stopped yet: the session's last finals arrive while it closes and must reach the journal.
         await teardownIO();
+        stopped = true;
         journal.close();
       });
     },
