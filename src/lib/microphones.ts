@@ -1,5 +1,5 @@
 import { killCapture, spawnCapture, spawnFailureMessage } from "#/lib/capture-process.js";
-import type { Microphone } from "#/lib/types";
+import type { Microphone } from "#/lib/types.js";
 
 const DEVICE_LIST_TIMEOUT_MS = 5_000;
 

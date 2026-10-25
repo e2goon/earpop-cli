@@ -7,8 +7,4 @@ export default defineConfig({
   target: "node24",
   clean: true,
   banner: { js: "#!/usr/bin/env node" },
-  esbuildOptions(options) {
-    // Resolve the tsconfig `#/*` alias for tsup/esbuild.
-    options.alias = { "#": "./src" };
-  },
 });

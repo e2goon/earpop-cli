@@ -1,5 +1,5 @@
 import { useInput } from "ink";
-import { useEffect } from "react";
+import { useEffect, useEffectEvent } from "react";
 
 import { handleInterrupt, resetOnInterrupt, setOnInterrupt } from "#/app/interrupt.js";
 
@@ -8,10 +8,11 @@ import { handleInterrupt, resetOnInterrupt, setOnInterrupt } from "#/app/interru
  * SIGINT remains on `installInterruptListeners` for non-raw signals.
  */
 export function useInterrupt(handler: () => void) {
+  const onInterrupt = useEffectEvent(handler);
   useEffect(() => {
-    setOnInterrupt(handler);
+    setOnInterrupt(() => onInterrupt());
     return resetOnInterrupt;
-  }, [handler]);
+  }, []);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") handleInterrupt();

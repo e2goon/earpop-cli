@@ -21,6 +21,6 @@ Agent workflow for this repo. Details live in linked docs — do not duplicate t
 
 ## Notes agents miss from the tree
 
-- Import alias `#/*` → `src/*` (tsconfig + tsup).
+- Import alias `#/*` → `src/*` (package.json `imports`; write the `.js` extension).
 - Capture platforms: `src/lib/capture-platforms.json` must stay aligned with `.github/workflows/capture.yml`.
 - Scripts and engines: see root `package.json` (`pnpm capture:*`, `pnpm release`, `pnpm check` / `lint` / `fmt`).

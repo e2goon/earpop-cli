@@ -2,7 +2,7 @@ import WebSocket from "ws";
 
 import { languageGeneralContext, normalizeLanguageHints } from "#/lib/languages.js";
 import { DEFAULT_REGION } from "#/lib/region.js";
-import type { SttEvent, SttOptions, SttRegion, SttSession, Token } from "#/lib/types";
+import type { SttEvent, SttOptions, SttRegion, SttSession, Token } from "#/lib/types.js";
 
 export const STT_MODEL = "stt-rt-v5";
 
@@ -74,6 +74,7 @@ export function startSession({
   return new Promise<SttSession>((resolve, reject) => {
     const socket = new WebSocket(REGION_WEBSOCKET_URLS[region ?? DEFAULT_REGION], {
       perMessageDeflate: false,
+      handshakeTimeout: CONNECT_TIMEOUT_MS,
     });
 
     let settled = false;
@@ -93,24 +94,7 @@ export function startSession({
     const emit = (event: SttEvent) => {
       if (!stopped) onEvent(event);
     };
-    const connectTimeout = setTimeout(() => {
-      if (settled) return;
-      settleReject(
-        new Error("Could not connect to transcription server within 15s. Check your network"),
-      );
-      socket.terminate();
-    }, CONNECT_TIMEOUT_MS);
-
-    function settleReject(error: Error) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(connectTimeout);
-      clearKeepalive();
-      reject(error);
-    }
-
     socket.on("open", () => {
-      clearTimeout(connectTimeout);
       // Endpoint off: provisional streams fast; finals come later with better word/diarization accuracy.
       const config = {
         api_key: apiKey,
@@ -217,7 +201,6 @@ export function startSession({
     });
 
     socket.on("close", () => {
-      clearTimeout(connectTimeout);
       clearKeepalive();
       if (resolveStop !== null) {
         const done = resolveStop;
@@ -236,7 +219,8 @@ export function startSession({
 
     socket.on("error", (error) => {
       if (!settled) {
-        settleReject(
+        settled = true;
+        reject(
           new Error(`Could not connect to transcription server (check network): ${error.message}`),
         );
         return;

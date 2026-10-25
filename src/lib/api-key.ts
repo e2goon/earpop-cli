@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { APP_ID, appDataDir } from "#/lib/paths.js";
-import type { SttRegion } from "#/lib/types";
+import type { SttRegion } from "#/lib/types.js";
 
 const execFileAsync = promisify(execFile);
 

@@ -1,4 +1,4 @@
-import type { SttLanguage } from "#/lib/languages";
+import type { SttLanguage } from "#/lib/languages.js";
 import type { SttRegion } from "#/lib/region.js";
 
 export type { SttRegion };

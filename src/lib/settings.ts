@@ -5,7 +5,7 @@ import { normalizeLanguageHints } from "#/lib/languages.js";
 import { appDataDir } from "#/lib/paths.js";
 import { isRegion } from "#/lib/region.js";
 import { createSerialQueue } from "#/lib/serial-queue.js";
-import type { CliSettings } from "#/lib/types";
+import type { CliSettings } from "#/lib/types.js";
 
 // Serialize concurrent saves so writers do not clobber each other.
 const enqueueWrite = createSerialQueue();

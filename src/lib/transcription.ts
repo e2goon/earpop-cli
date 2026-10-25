@@ -70,6 +70,7 @@ export function createTranscription({
   let stateMessage: string | undefined;
   let finalTokens: Token[] = [];
   let finalChars = 0;
+  const history: Token[] = [];
   let pendingTokens: Token[] = [];
   let speechContext = "";
   let startedAtMs = 0;
@@ -199,6 +200,7 @@ export function createTranscription({
           } else if (event.type === "tokens") {
             if (event.final.length > 0) {
               journal.tokens(event.final);
+              history.push(...event.final);
               pushTail(event.final);
               speechContext = appendSttContext({ text: speechContext, tokens: event.final });
             }
@@ -263,6 +265,10 @@ export function createTranscription({
   }
 
   return {
+    getHistory() {
+      return history;
+    },
+
     async start() {
       startedAtMs = Date.now();
       capture = await openCapture(device);

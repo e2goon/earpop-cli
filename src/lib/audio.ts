@@ -1,5 +1,5 @@
 import { spawnCapture, spawnFailureMessage, stopCaptureChild } from "#/lib/capture-process.js";
-import type { AudioCapture, AudioOptions } from "#/lib/types";
+import type { AudioCapture, AudioOptions } from "#/lib/types.js";
 
 // 100ms × 16kHz × 2 bytes (s16le) — same as desktop / earpop-capture.
 const FRAME_BYTES = 3200;

@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import platforms from "#/lib/capture-platforms.json";
 import integrity from "#/lib/capture-integrity.json";
@@ -32,7 +31,7 @@ function looksLikePackageRoot(dir: string) {
 }
 
 function packageRoot() {
-  let dir = dirname(fileURLToPath(import.meta.url));
+  let dir = import.meta.dirname;
   while (!looksLikePackageRoot(dir)) {
     const parent = dirname(dir);
     if (parent === dir) break;

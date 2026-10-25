@@ -1,4 +1,4 @@
-import { PasswordInput, Select } from "@inkjs/ui";
+import { ConfirmInput, PasswordInput, Select } from "@inkjs/ui";
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 
@@ -127,26 +127,20 @@ export function SettingsScreen(props: SettingsScreenProps) {
       )}
 
       {view === "api-key-delete-confirm" && (
-        <DeleteConfirm
-          onConfirm={() => {
-            props.onDeleteApiKey();
-            setView("menu");
-          }}
-          onCancel={() => setView("menu")}
-        />
+        <Box gap={1}>
+          <Text color="red">
+            Delete the saved API key? You will need to enter it again next run
+          </Text>
+          <ConfirmInput
+            defaultChoice="cancel"
+            onConfirm={() => {
+              props.onDeleteApiKey();
+              setView("menu");
+            }}
+            onCancel={() => setView("menu")}
+          />
+        </Box>
       )}
     </Box>
-  );
-}
-
-function DeleteConfirm(props: { onConfirm: () => void; onCancel: () => void }) {
-  useInput((input) => {
-    if (input === "y") props.onConfirm();
-    if (input === "n") props.onCancel();
-  });
-  return (
-    <Text color="red">
-      Delete the saved API key? You will need to enter it again next run (y/n)
-    </Text>
   );
 }

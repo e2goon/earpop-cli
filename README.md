@@ -31,10 +31,10 @@ Language hints default to English. Press `s` and choose "Choose languages" to ch
 [S1] So the plan is to ship the beta on Friday.
 [S2] Does that include the Windows build?
 [S1] Yes, the capture helper is ready for x64.
-p pause · 1-9 speaker · 0 all · m mic · s settings · ESC end
+p pause  1-9 speaker  0 all  Up history  m mic  s settings  ESC end
 ```
 
-Dimmed text is provisional and gets replaced once Soniox finalizes it. Only the last six lines fit on screen; everything goes into the transcript file.
+Dimmed text is provisional and gets replaced once Soniox finalizes it. The live view shows the last six lines; press `Up` or scroll the mouse wheel to read earlier captions from this session. Everything also goes into the transcript file.
 
 | Key        | Action                                                                                              |
 | ---------- | --------------------------------------------------------------------------------------------------- |
@@ -43,6 +43,8 @@ Dimmed text is provisional and gets replaced once Soniox finalizes it. Only the 
 | `0`        | Show everyone again                                                                                 |
 | `m`        | Switch microphone                                                                                   |
 | `s`        | Settings                                                                                            |
+| `Up`       | Open the session history. `Up`/`Down` and `PgUp`/`PgDn` scroll, `Home` jumps to the start           |
+| `End`      | Leave the history and return to live captions (`ESC` does the same while the history is open)       |
 | `ESC`      | End the session, then press again to quit                                                           |
 
 `Ctrl+C` does the same as `ESC`. If quitting gets stuck, press it once more to force it.
