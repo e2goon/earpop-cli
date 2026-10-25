@@ -1,7 +1,7 @@
 {
-  "earpop-capture-darwin-arm64": "7ab173a0161ed8acee456001222b461592663bd131efa076810269fa085a7bd2",
-  "earpop-capture-darwin-x64": "1578bb907e309f5498671006df20e4cdb87b02510f41f6e9a9f9b97c4624487c",
-  "earpop-capture-win32-x64": "6af477bb6121271ad340b787c7e5c340ea3b11fdef02aeb566767d96b1cd5ad9",
-  "earpop-capture-linux-x64": "39e9aad74ac618dfbad9c27a7e6037e2e5aac130802467bb676658d9d73d3d83",
-  "earpop-capture-linux-arm64": "79b17457fd0ea1caec84ed73c43055731a92b76f72d916168be778977ef36ce7"
+  "earpop-capture-darwin-arm64": "c1302077cd05fa4c768b5616cd32e799efeef402b96c164253cc1cbd00df2156",
+  "earpop-capture-darwin-x64": "aae8e6ccc450e3cbe575a34161ce0987816ed251785c29cc5fee8cc19d757d1a",
+  "earpop-capture-win32-x64": "40a3c7e1df68ae15725bb4084be18364b410b00efedb2132955cf871800e8f9c",
+  "earpop-capture-linux-x64": "5c33b90fe2065a28a3f06eb2dd47bd37f85e47ba91d8066ecf6132e4907b395e",
+  "earpop-capture-linux-arm64": "7cd7c3bf5c13322579ac88c601a7ef003798e298faad8de07c3f27ece4ac96b2"
 }
