@@ -7,13 +7,13 @@
 ## Commits
 
 ```text
-<type>(<optional scope>)<!?>: <한글 설명>
+<type>(<optional scope>)<!?>: <description>
 
-[optional 한글 body]
+[optional body]
 ```
 
 - **type** / **scope**: English (`feat`, `fix`, `cli`, …)
-- **description** / **body**: Korean; subject ~72 chars when practical; no trailing period on subject
+- **description** / **body**: English; subject ~72 chars when practical; no trailing period on subject
 - Breaking: `feat!:` / `fix!:` and/or `BREAKING CHANGE:` footer
 - No `Co-authored-by: Cursor` trailers
 - Commit only when the maintainer asks
