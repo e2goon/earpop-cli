@@ -61,6 +61,7 @@ export function LiveApp() {
   const [journalPath, setJournalPath] = useState<string | null>(null);
   const [fatalMessage, setFatalMessage] = useState("Unknown error");
   const [region, setRegion] = useState<SttRegion>("us");
+  const [finishing, setFinishing] = useState(false);
 
   const controllerRef = useRef<TranscriptionController | null>(null);
   const languageHintsRef = useRef<SttLanguage[]>([...DEFAULT_LANGUAGE_HINTS]);
@@ -71,9 +72,16 @@ export function LiveApp() {
     quit(journalPath === null ? undefined : () => printSessionEnd(journalPath));
   };
 
-  // First Esc / Ctrl+C: stop session, keep path on screen. Second press: exit.
+  // First Esc / Ctrl+C: stop session, keep path on screen. Second press: exit once the
+  // transcript is finalized. Third press: exit immediately.
   const sessionEndedRef = useRef(false);
   const exitStartedRef = useRef(false);
+  const stopRef = useRef<Promise<void> | null>(null);
+
+  const stopController = () => {
+    stopRef.current ??= controllerRef.current?.stop().catch(() => {}) ?? Promise.resolve();
+    return stopRef.current;
+  };
 
   const copyJournalPath = () => {
     if (journalPath !== null) copyWithFallback(journalPath);
@@ -90,14 +98,11 @@ export function LiveApp() {
   };
 
   const requestExit = () => {
-    if (sessionEndedRef.current || exitStartedRef.current || phase === "fatal") {
-      if (exitStartedRef.current) {
-        // Prefer exit over a stuck stop().
-        void controllerRef.current?.stop();
-        process.exit(130);
-      }
+    if (exitStartedRef.current) process.exit(130);
+    if (sessionEndedRef.current || phase === "fatal") {
       exitStartedRef.current = true;
-      finish();
+      setFinishing(true);
+      void stopController().then(finish);
       return;
     }
 
@@ -106,13 +111,11 @@ export function LiveApp() {
     closeOverlay();
     setPhase("ended");
 
-    const controller = controllerRef.current;
-    if (controller === null) {
+    if (controllerRef.current === null) {
       finish();
       return;
     }
-    // Stay on the ended screen until the next Esc / Ctrl+C.
-    void controller.stop().catch(() => {});
+    void stopController();
   };
   useInterrupt(requestExit);
 
@@ -294,6 +297,7 @@ export function LiveApp() {
       {...snapshot}
       journalPath={journalPath ?? undefined}
       ended={phase === "ended"}
+      finishing={finishing}
       overlay={overlay}
       getHistory={() => controllerRef.current?.getHistory() ?? []}
       onTogglePause={() => {

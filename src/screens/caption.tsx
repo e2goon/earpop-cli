@@ -34,6 +34,7 @@ interface CaptionScreenProps {
   getHistory: () => Token[];
   journalPath?: string;
   ended?: boolean;
+  finishing?: boolean;
   onTogglePause: () => void;
   onQuit: () => void;
   onOpenMicrophones: () => void;
@@ -495,9 +496,11 @@ export function CaptionScreen(props: CaptionScreenProps) {
   const hints =
     history !== null
       ? `History ${top + 1}-${Math.min(top + historyHeight, historyRows.length)}/${historyRows.length}  Up/Down PgUp/PgDn scroll  End live`
-      : props.ended
-        ? "Up history  ESC quit"
-        : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  0 all  Up history  m mic  s settings  ESC end`;
+      : props.finishing
+        ? "Saving transcript  ESC force quit"
+        : props.ended
+          ? "Up history  ESC quit"
+          : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  0 all  Up history  m mic  s settings  ESC end`;
 
   return (
     <Box flexDirection="column">
