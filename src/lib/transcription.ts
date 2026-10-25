@@ -1,5 +1,7 @@
 import { startCapture } from "#/lib/audio.js";
+import { errorMessage } from "#/lib/errors.js";
 import { languageHintLabel, normalizeLanguageHints, type SttLanguage } from "#/lib/languages.js";
+import { createSerialQueue } from "#/lib/serial-queue.js";
 import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
@@ -24,7 +26,7 @@ export interface TranscriptionSnapshot {
   elapsedSeconds: number;
 }
 
-export interface TranscriptionOptions {
+interface TranscriptionOptions {
   journal: Journal;
   apiKey: string;
   device?: string;
@@ -35,13 +37,7 @@ export interface TranscriptionOptions {
   onFatal: (message: string) => void;
 }
 
-export interface TranscriptionController {
-  start(): Promise<void>;
-  togglePause(): Promise<void>;
-  switchMicrophone(name: string): Promise<void>;
-  setLanguageHints(codes: SttLanguage[]): Promise<void>;
-  stop(): Promise<void>;
-}
+export type TranscriptionController = ReturnType<typeof createTranscription>;
 
 export function createTranscription({
   journal,
@@ -68,19 +64,12 @@ export function createTranscription({
   let pausedTotalMs = 0;
 
   // Serialize togglePause/switchMicrophone/setLanguageHints/stop — overlapping ops can open capture atop teardown.
-  let opChain: Promise<void> = Promise.resolve();
-  function enqueue(op: () => Promise<void>) {
-    const run = opChain.then(op, op);
-    opChain = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
+  const enqueue = createSerialQueue();
 
   let state: LiveState = "connecting";
   let stateMessage: string | undefined;
   let finalTokens: Token[] = [];
+  let finalChars = 0;
   let pendingTokens: Token[] = [];
   let speechContext = "";
   let startedAtMs = 0;
@@ -131,12 +120,14 @@ export function createTranscription({
   }
 
   function pushTail(tokens: Token[]) {
-    finalTokens = [...finalTokens, ...tokens];
-    let total = finalTokens.reduce((sum, token) => sum + token.text.length, 0);
-    while (total > TAIL_CHARS && finalTokens.length > 1) {
-      total -= finalTokens[0]!.text.length;
-      finalTokens = finalTokens.slice(1);
+    const next = finalTokens.concat(tokens);
+    for (const token of tokens) finalChars += token.text.length;
+    let drop = 0;
+    while (finalChars > TAIL_CHARS && next.length - drop > 1) {
+      finalChars -= next[drop]!.text.length;
+      drop += 1;
     }
+    finalTokens = drop > 0 ? next.slice(drop) : next;
   }
 
   function clearTimers() {
@@ -183,7 +174,7 @@ export function createTranscription({
         clientReferenceId,
         region,
         languageHints,
-        contextText: speechContext.length > 0 ? speechContext : undefined,
+        contextText: speechContext,
         onEvent: (event) => {
           if (stopped || generation !== connectGeneration) return;
           if (event.type === "state") {
@@ -223,20 +214,12 @@ export function createTranscription({
         return;
       }
       session = nextSession;
+      connecting = false;
     } catch (error) {
       if (generation !== connectGeneration) return;
       connecting = false;
       if (stopped) return;
-      scheduleReconnect(error instanceof Error ? error.message : String(error));
-      return;
-    }
-
-    if (generation !== connectGeneration) return;
-    connecting = false;
-    if (stopped || paused) {
-      const orphan = session;
-      session = null;
-      void orphan?.stop().catch(() => {});
+      scheduleReconnect(errorMessage(error));
     }
   }
 
@@ -313,7 +296,7 @@ export function createTranscription({
           capture = await openCapture(device);
         } catch (error) {
           state = "error";
-          stateMessage = error instanceof Error ? error.message : String(error);
+          stateMessage = errorMessage(error);
           emit(true);
           return;
         }
@@ -347,9 +330,7 @@ export function createTranscription({
           await saveSettings({ microphone: device });
           stateMessage = `Switched microphone to ${device}`;
         } catch (error) {
-          stateMessage = `Failed to switch microphone: ${
-            error instanceof Error ? error.message : String(error)
-          } (keeping previous microphone)`;
+          stateMessage = `Failed to switch microphone: ${errorMessage(error)} (keeping previous microphone)`;
           emit(true);
           try {
             capture = await openCapture(previous);
@@ -408,7 +389,6 @@ export function createTranscription({
 
         await teardownIO();
         journal.close();
-        emit(true);
       });
     },
   };

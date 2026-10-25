@@ -1,14 +1,14 @@
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
+import { APP_ID, appDataDir } from "#/lib/paths.js";
 import type { SttRegion } from "#/lib/types";
 
 const execFileAsync = promisify(execFile);
 
-const KEYCHAIN_SERVICE = "com.earpop.app";
+const KEYCHAIN_SERVICE = APP_ID;
 // Legacy single-account keychain entry; jp-only fallback (desktop app shared Tokyo key).
 const LEGACY_KEYCHAIN_ACCOUNT = "soniox-api-key";
 
@@ -17,18 +17,13 @@ function keychainAccount(region: SttRegion) {
 }
 
 function credentialsPath(region: SttRegion) {
-  return join(homedir(), ".earpop", `credentials-${region}`);
+  return join(appDataDir(), `credentials-${region}`);
 }
 
 const SECURITY_NOT_FOUND_EXIT = 44;
 
 function isSecurityNotFound(error: unknown) {
   return Number((error as NodeJS.ErrnoException).code) === SECURITY_NOT_FOUND_EXIT;
-}
-
-// Do not hex-decode security -w output: Soniox keys are ASCII hex and were corrupted by false decoding.
-function normalizeKeychainOutput(stdout: string) {
-  return stdout.trim();
 }
 
 export async function loadApiKey(region: SttRegion) {
@@ -53,7 +48,8 @@ export async function loadApiKey(region: SttRegion) {
           account,
           "-w",
         ]);
-        const key = normalizeKeychainOutput(stdout);
+        // Do not hex-decode security -w output: Soniox keys are ASCII hex and were corrupted by false decoding.
+        const key = stdout.trim();
         if (key !== "") return key;
       } catch (error) {
         if (!isSecurityNotFound(error)) {
@@ -68,7 +64,7 @@ export async function loadApiKey(region: SttRegion) {
   }
 
   for (const path of region === "jp"
-    ? [credentialsPath(region), join(homedir(), ".earpop", "credentials")]
+    ? [credentialsPath(region), join(appDataDir(), "credentials")]
     : [credentialsPath(region)]) {
     try {
       const key = (await readFile(path, "utf8")).trim();

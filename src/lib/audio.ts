@@ -1,7 +1,4 @@
-import { spawn } from "node:child_process";
-
-import { resolveCaptureBin } from "#/lib/capture-bin.js";
-import { captureSpawnEnv, stopCaptureChild } from "#/lib/capture-process.js";
+import { spawnCapture, spawnFailureMessage, stopCaptureChild } from "#/lib/capture-process.js";
 import type { AudioCapture, AudioOptions } from "#/lib/types";
 
 // 100ms × 16kHz × 2 bytes (s16le) — same as desktop / earpop-capture.
@@ -9,6 +6,7 @@ const FRAME_BYTES = 3200;
 
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
 const TERM_GRACE_MS = 2_000;
+const STDERR_KEEP_CHARS = 4_096;
 
 function micPermissionHint() {
   if (process.platform === "darwin") {
@@ -28,24 +26,14 @@ function captureErrorMessage({ code, stderr }: { code: number | null; stderr: st
   return `Cannot use microphone: ${detail} — ${micPermissionHint()}`;
 }
 
-export function startCapture({ device: deviceOption, onFrame, onError }: AudioOptions) {
-  const device = deviceOption ?? "default";
+export function startCapture({ device, onFrame, onError }: AudioOptions) {
   return new Promise<AudioCapture>((resolve, reject) => {
-    const bin = resolveCaptureBin();
-    if (!bin.ok) {
-      reject(new Error(bin.message));
-      return;
-    }
-
     const args = ["capture"];
     if (device !== "default") {
       args.push("--device", device);
     }
 
-    const child = spawn(bin.path, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: captureSpawnEnv(),
-    });
+    const child = spawnCapture(args);
 
     let settled = false;
     let stopped = false;
@@ -68,11 +56,7 @@ export function startCapture({ device: deviceOption, onFrame, onError }: AudioOp
     );
 
     child.on("error", (error: NodeJS.ErrnoException) => {
-      fail(
-        error.code === "ENOENT"
-          ? `Failed to run capture helper: ${bin.path}`
-          : `Failed to run capture helper: ${error.message}`,
-      );
+      fail(spawnFailureMessage({ child, error }));
     });
 
     child.on("close", (code) => {
@@ -84,7 +68,7 @@ export function startCapture({ device: deviceOption, onFrame, onError }: AudioOp
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = (stderr + chunk.toString()).slice(-STDERR_KEEP_CHARS);
     });
 
     child.stdout.on("data", (chunk: Buffer) => {

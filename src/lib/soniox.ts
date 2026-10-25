@@ -1,17 +1,13 @@
 import WebSocket from "ws";
 
-import {
-  languageGeneralContext,
-  normalizeLanguageHints,
-  type SttLanguage,
-} from "#/lib/languages.js";
+import { languageGeneralContext, normalizeLanguageHints } from "#/lib/languages.js";
 import { DEFAULT_REGION } from "#/lib/region.js";
 import type { SttEvent, SttOptions, SttRegion, SttSession, Token } from "#/lib/types";
 
 export const STT_MODEL = "stt-rt-v5";
 
 /** Keep a short rolling transcript for Soniox context on reconnect (matches desktop). */
-export const STT_CONTEXT_CHARS = 1_500;
+const STT_CONTEXT_CHARS = 1_500;
 
 const CONNECT_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 5_000;
@@ -25,24 +21,12 @@ export function appendSttContext({ text, tokens }: { text: string; tokens: Token
   for (const token of tokens) {
     next += token.text;
   }
+  if (next.length <= STT_CONTEXT_CHARS) return next;
   const chars = [...next];
   if (chars.length > STT_CONTEXT_CHARS) {
     return chars.slice(-STT_CONTEXT_CHARS).join("");
   }
   return next;
-}
-
-function buildSessionContext({
-  contextText,
-  languageHints,
-}: {
-  contextText: string | undefined;
-  languageHints: SttLanguage[];
-}) {
-  return {
-    general: languageGeneralContext(languageHints),
-    ...(contextText !== undefined && contextText.length > 0 ? { text: contextText } : {}),
-  };
 }
 
 interface ServerToken {
@@ -78,13 +62,8 @@ const REGION_WEBSOCKET_URLS: Record<SttRegion, string> = {
   jp: "wss://stt-rt.jp.soniox.com/transcribe-websocket",
 };
 
-function isFatalErrorCode(code: number) {
-  return code === 401 || code === 402;
-}
-
 export function startSession({
   apiKey,
-  model,
   region,
   languageHints,
   clientReferenceId,
@@ -93,8 +72,6 @@ export function startSession({
 }: SttOptions) {
   const hints = normalizeLanguageHints(languageHints);
   return new Promise<SttSession>((resolve, reject) => {
-    onEvent({ type: "state", state: "connecting" });
-
     const socket = new WebSocket(REGION_WEBSOCKET_URLS[region ?? DEFAULT_REGION], {
       perMessageDeflate: false,
     });
@@ -135,9 +112,9 @@ export function startSession({
     socket.on("open", () => {
       clearTimeout(connectTimeout);
       // Endpoint off: provisional streams fast; finals come later with better word/diarization accuracy.
-      const config: Record<string, unknown> = {
+      const config = {
         api_key: apiKey,
-        model: model ?? STT_MODEL,
+        model: STT_MODEL,
         audio_format: "pcm_s16le",
         sample_rate: 16000,
         num_channels: 1,
@@ -146,11 +123,12 @@ export function startSession({
         language_hints_strict: hints.length === 1,
         enable_speaker_diarization: true,
         enable_endpoint_detection: false,
-        context: buildSessionContext({ contextText, languageHints: hints }),
+        context: {
+          general: languageGeneralContext(hints),
+          text: contextText || undefined,
+        },
+        client_reference_id: clientReferenceId,
       };
-      if (clientReferenceId !== undefined) {
-        config.client_reference_id = clientReferenceId;
-      }
       socket.send(JSON.stringify(config));
 
       keepaliveTimer = setInterval(() => {
@@ -211,29 +189,29 @@ export function startSession({
       if (response.finished === true) {
         finishedSeen = true;
         clearKeepalive();
-        emit({ type: "finished" });
         if (socket.readyState === WebSocket.OPEN) socket.close();
         return;
       }
 
-      if (typeof response.error_code === "number" && response.error_code !== null) {
-        const fatal = isFatalErrorCode(response.error_code);
+      if (typeof response.error_code === "number") {
         errored = true;
         emit({
           type: "state",
           state: "error",
           message:
             response.error_message ?? `Transcription server error (code ${response.error_code})`,
-          retryable: !fatal,
+          retryable: response.error_code !== 401 && response.error_code !== 402,
         });
         return;
       }
 
       if (Array.isArray(response.tokens)) {
-        const final = response.tokens
-          .filter((t) => t.is_final === true && t.text !== END_TOKEN_TEXT)
-          .map(toToken);
-        const pending = response.tokens.filter((t) => t.is_final !== true).map(toToken);
+        const final: Token[] = [];
+        const pending: Token[] = [];
+        for (const raw of response.tokens) {
+          if (raw.is_final !== true) pending.push(toToken(raw));
+          else if (raw.text !== END_TOKEN_TEXT) final.push(toToken(raw));
+        }
         emit({ type: "tokens", final, pending });
       }
     });

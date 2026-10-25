@@ -1,7 +1,7 @@
 import { useInput } from "ink";
 import { useEffect } from "react";
 
-import { handleInterrupt, setOnInterrupt } from "#/app/interrupt.js";
+import { handleInterrupt, resetOnInterrupt, setOnInterrupt } from "#/app/interrupt.js";
 
 /**
  * Wire Ctrl+C through Ink's key parser (digit `3` ≠ Ctrl+C / 0x03).
@@ -10,9 +10,7 @@ import { handleInterrupt, setOnInterrupt } from "#/app/interrupt.js";
 export function useInterrupt(handler: () => void) {
   useEffect(() => {
     setOnInterrupt(handler);
-    return () => {
-      setOnInterrupt(() => process.exit(130));
-    };
+    return resetOnInterrupt;
   }, [handler]);
 
   useInput((input, key) => {

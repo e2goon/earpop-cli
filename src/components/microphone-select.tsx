@@ -3,7 +3,7 @@ import { Box, Text, useInput } from "ink";
 
 import type { Microphone } from "#/lib/types.js";
 
-export interface MicrophoneSelectProps {
+interface MicrophoneSelectProps {
   microphones: Microphone[];
   current?: string;
   loading: boolean;
@@ -46,11 +46,7 @@ export function MicrophoneSelect(props: MicrophoneSelectProps) {
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Select
-        options={options}
-        defaultValue={props.current}
-        onChange={(name) => props.onPick(name)}
-      />
+      <Select options={options} defaultValue={props.current} onChange={props.onPick} />
       {props.onCancel && <Text dimColor>ESC cancel</Text>}
     </Box>
   );

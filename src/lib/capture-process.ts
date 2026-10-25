@@ -1,4 +1,6 @@
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+
+import { resolveCaptureBin } from "#/lib/capture-bin.js";
 
 const PASSTHROUGH_KEYS = [
   "PATH",
@@ -27,14 +29,33 @@ const PASSTHROUGH_KEYS = [
   "LC_CTYPE",
 ] as const;
 
-/** Minimal env for the capture sidecar (no API keys or cloud credentials). */
-export function captureSpawnEnv() {
+export function spawnCapture(args: string[]) {
+  const bin = resolveCaptureBin();
+  if (!bin.ok) throw new Error(bin.message);
+
+  // Minimal env for the capture sidecar (no API keys or cloud credentials).
   const env: NodeJS.ProcessEnv = {};
   for (const key of PASSTHROUGH_KEYS) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  return env;
+  return spawn(bin.path, args, { stdio: ["ignore", "pipe", "pipe"], env });
+}
+
+export function spawnFailureMessage({
+  child,
+  error,
+}: {
+  child: ChildProcess;
+  error: NodeJS.ErrnoException;
+}) {
+  return `Failed to run capture helper: ${error.code === "ENOENT" ? child.spawnfile : error.message}`;
+}
+
+export function killCapture({ child, force }: { child: ChildProcess; force: boolean }) {
+  // Windows: signal names are not POSIX; bare kill() is the reliable force path.
+  if (process.platform === "win32") child.kill();
+  else child.kill(force ? "SIGKILL" : "SIGTERM");
 }
 
 export function stopCaptureChild({
@@ -52,16 +73,11 @@ export function stopCaptureChild({
       resolve();
       return;
     }
-    const killTimer = setTimeout(() => {
-      // Windows: signal names are not POSIX; bare kill() is the reliable force path.
-      if (process.platform === "win32") child.kill();
-      else child.kill("SIGKILL");
-    }, graceMs);
+    const killTimer = setTimeout(() => killCapture({ child, force: true }), graceMs);
     child.once("close", () => {
       clearTimeout(killTimer);
       resolve();
     });
-    if (process.platform === "win32") child.kill();
-    else child.kill("SIGTERM");
+    killCapture({ child, force: false });
   });
 }

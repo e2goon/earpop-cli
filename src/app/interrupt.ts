@@ -1,7 +1,12 @@
-let onInterrupt: () => void = () => process.exit(130);
+const exitOnInterrupt = () => process.exit(130);
+let onInterrupt: () => void = exitOnInterrupt;
 
 export function setOnInterrupt(handler: () => void) {
   onInterrupt = handler;
+}
+
+export function resetOnInterrupt() {
+  onInterrupt = exitOnInterrupt;
 }
 
 // Same press can arrive as both parsed Ctrl+C and SIGINT; real double-taps are slower than this.
@@ -17,5 +22,5 @@ export function handleInterrupt() {
 
 /** Non-UI path (e.g. `kill -INT`). Raw-mode Ctrl+C is handled via Ink `useInput`. */
 export function installInterruptListeners() {
-  process.on("SIGINT", () => handleInterrupt());
+  process.on("SIGINT", handleInterrupt);
 }

@@ -10,29 +10,13 @@
  * Root build uses package.json prepublishOnly (tsup). GITHUB_ACTIONS → npm --provenance.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { ROOT, hostPlatform, platforms, readJson, runInherit, writeJson } from "./lib.mjs";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PLATFORMS_PATH = join(ROOT, "src/lib/capture-platforms.json");
 const INTEGRITY_PATH = join(ROOT, "src/lib/capture-integrity.json");
-const platforms = JSON.parse(readFileSync(PLATFORMS_PATH, "utf8"));
 const doPublish = process.argv.includes("--publish");
 const requireAll = doPublish || process.argv.includes("--all");
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"));
-}
-
-function writeJson(path, value) {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function hostPlatform() {
-  return platforms.find((p) => p.os === process.platform && p.cpu === process.arch);
-}
 
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -51,14 +35,10 @@ function restoreOptional(rootPkg, savedOptional) {
   writeJson(join(ROOT, "package.json"), rootPkg);
 }
 
-function run(command, args, cwd = ROOT) {
-  const r = spawnSync(command, args, {
-    cwd,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-  if (r.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed (${r.status ?? 1})`);
+function runOrThrow({ command, args, cwd }) {
+  const status = runInherit({ command, args, cwd });
+  if (status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} failed (${status})`);
   }
 }
 
@@ -103,22 +83,11 @@ for (const p of platforms) {
   const pkgPath = join(ROOT, "npm", p.package, "package.json");
   const pkg = readJson(pkgPath);
   pkg.version = version;
-  pkg.repository = {
-    type: "git",
-    url: "https://github.com/e2goon/earpop-cli.git",
-  };
+  pkg.repository = rootPkg.repository;
   writeJson(pkgPath, pkg);
 }
 
-rootPkg.repository = {
-  type: "git",
-  url: "https://github.com/e2goon/earpop-cli.git",
-};
-const exactOptional = {};
-for (const p of platforms) {
-  exactOptional[p.package] = version;
-}
-rootPkg.optionalDependencies = exactOptional;
+rootPkg.optionalDependencies = Object.fromEntries(platforms.map((p) => [p.package, version]));
 writeJson(rootPkgPath, rootPkg);
 
 const npmPublishArgs = ["publish", "--access", "public"];
@@ -129,10 +98,10 @@ if (process.env.GITHUB_ACTIONS === "true") {
 try {
   for (const p of platforms) {
     console.log(`Publishing ${p.package}@${version}...`);
-    run("npm", npmPublishArgs, join(ROOT, "npm", p.package));
+    runOrThrow({ command: "npm", args: npmPublishArgs, cwd: join(ROOT, "npm", p.package) });
   }
   console.log(`Publishing earpop-cli@${version}...`);
-  run("npm", npmPublishArgs, ROOT);
+  runOrThrow({ command: "npm", args: npmPublishArgs });
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);
   process.exitCode = 1;

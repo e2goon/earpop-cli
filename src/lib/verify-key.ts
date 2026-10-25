@@ -1,19 +1,12 @@
+import { errorMessage } from "#/lib/errors.js";
 import { startSession } from "#/lib/soniox.js";
 import type { SttRegion, SttSession } from "#/lib/types.js";
 
 const VERIFY_GRACE_MS = 3_000;
 
-export type KeyVerification = { ok: true } | { ok: false; message: string };
+type KeyVerification = { ok: true } | { ok: false; message: string };
 
-export function verifyApiKey({
-  key,
-  region,
-  model,
-}: {
-  key: string;
-  region: SttRegion;
-  model: string;
-}) {
+export function verifyApiKey({ key, region }: { key: string; region: SttRegion }) {
   return new Promise<KeyVerification>((resolve) => {
     let session: SttSession | null = null;
     let settled = false;
@@ -30,7 +23,6 @@ export function verifyApiKey({
 
     startSession({
       apiKey: key,
-      model,
       region,
       onEvent: (event) => {
         if (settled) return;
@@ -48,7 +40,7 @@ export function verifyApiKey({
         if (settled) void opened.stop().catch(() => {});
       })
       .catch((error: unknown) => {
-        settle({ ok: false, message: error instanceof Error ? error.message : String(error) });
+        settle({ ok: false, message: errorMessage(error) });
       });
   });
 }

@@ -1,28 +1,28 @@
 import { Spinner } from "@inkjs/ui";
 import { Text, useInput, useStdout, Box } from "ink";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { shortPath } from "#/lib/clipboard.js";
 import type { SttLanguage } from "#/lib/languages.js";
 import type { Microphone, SttRegion, SttState, Token } from "#/lib/types.js";
-import { SettingsScreen } from "#/screens/settings.js";
+import { SettingsScreen, type SettingsScreenProps } from "#/screens/settings.js";
 
 export type CaptionOverlay =
   | { kind: "none" }
   | { kind: "mic"; microphones: Microphone[]; loading: boolean; error?: string }
-  | {
-      kind: "settings";
-      microphones: Microphone[];
-      microphonesLoading: boolean;
-      currentMicrophone?: string;
-      region?: SttRegion;
-      languages: SttLanguage[];
-      hasApiKey: boolean;
-      notice?: string;
-    };
+  | ({ kind: "settings" } & Pick<
+      SettingsScreenProps,
+      | "microphones"
+      | "microphonesLoading"
+      | "currentMicrophone"
+      | "region"
+      | "languages"
+      | "hasApiKey"
+      | "notice"
+    >);
 
-export interface CaptionScreenProps {
+interface CaptionScreenProps {
   state: SttState;
   stateMessage?: string;
   device: string;
@@ -37,8 +37,7 @@ export interface CaptionScreenProps {
   onOpenMicrophones: () => void;
   onOpenSettings: () => void;
   onPickMicrophone: (name: string) => void;
-  onCloseMicrophones: () => void;
-  onCloseSettings: () => void;
+  onCloseOverlay: () => void;
   onSettingsPickMicrophone: (name: string) => void;
   onSettingsPickLanguages: (codes: SttLanguage[]) => void;
   onSettingsPickRegion: (region: SttRegion) => void;
@@ -78,7 +77,7 @@ interface Piece {
   tag?: boolean;
 }
 
-function speakerColor(speaker: string): SpeakerColor | undefined {
+function speakerColor(speaker: string) {
   const index = Number(speaker);
   if (!Number.isInteger(index) || index < 1 || index > 9) return undefined;
   return SPEAKER_COLORS[index - 1];
@@ -109,28 +108,18 @@ function stringWidth(text: string) {
   return width;
 }
 
-function speakerAllowed({
-  speaker,
-  focusedSpeakers,
-}: {
-  speaker: string | undefined;
-  focusedSpeakers: ReadonlySet<string>;
-}) {
-  if (focusedSpeakers.size === 0) return true;
-  return speaker !== undefined && focusedSpeakers.has(speaker);
+function sortSpeakerIds(ids: Iterable<string>) {
+  return [...ids].sort((a, b) => Number(a) - Number(b));
 }
 
-function formatFocusLabel(focusedSpeakers: ReadonlySet<string>) {
-  if (focusedSpeakers.size === 0) return undefined;
-  return [...focusedSpeakers].sort((a, b) => Number(a) - Number(b));
-}
-
-function heardSpeakerIds(tokens: Token[]) {
+function heardSpeakerIds(tokenLists: Token[][]) {
   const heard = new Set<string>();
-  for (const token of tokens) {
-    if (token.speaker !== undefined) heard.add(token.speaker);
+  for (const tokens of tokenLists) {
+    for (const token of tokens) {
+      if (token.speaker !== undefined) heard.add(token.speaker);
+    }
   }
-  return [...heard].sort((a, b) => Number(a) - Number(b));
+  return sortSpeakerIds(heard);
 }
 
 function formatSpeakerIds(ids: string[]) {
@@ -172,25 +161,26 @@ function toLines({
   };
 
   const eat = ({ token, pending }: { token: Token; pending: boolean }) => {
-    if (!speakerAllowed({ speaker: token.speaker, focusedSpeakers })) return;
-    const next = token.speaker;
-    if ((closed || (next !== undefined && next !== speaker)) && (stable !== "" || tail !== "")) {
-      push();
+    if (
+      focusedSpeakers.size > 0 &&
+      (token.speaker === undefined || !focusedSpeakers.has(token.speaker))
+    ) {
+      return;
     }
+    const next = token.speaker;
+    if (closed || (next !== undefined && next !== speaker)) push();
     if (next !== undefined) speaker = next;
     if (pending) tail += token.text;
     else stable += token.text;
     closed = endsSentence(token.text);
   };
 
-  const finalTail: Token[] = [];
-  let used = 0;
-  for (let i = finalTokens.length - 1; i >= 0 && used < CAPTION_TAIL_CHARS; i -= 1) {
-    finalTail.unshift(finalTokens[i]!);
-    used += finalTokens[i]!.text.length;
+  let start = finalTokens.length;
+  for (let used = 0; start > 0 && used < CAPTION_TAIL_CHARS; start -= 1) {
+    used += finalTokens[start - 1]!.text.length;
   }
-  for (const token of finalTail) {
-    eat({ token, pending: false });
+  for (let i = start; i < finalTokens.length; i += 1) {
+    eat({ token: finalTokens[i]!, pending: false });
   }
   for (const token of pendingTokens) {
     eat({ token, pending: true });
@@ -221,17 +211,8 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
     lineWidth += stringWidth(piece.text);
   };
 
-  const appendText = ({
-    text,
-    dim,
-    color,
-  }: {
-    text: string;
-    dim: boolean;
-    color?: SpeakerColor;
-  }) => {
-    if (text.length === 0) return;
-    appendPiece({ text, dim, ...(color !== undefined ? { color } : {}) });
+  const appendText = ({ text, piece }: { text: string; piece: Piece }) => {
+    if (text.length > 0) appendPiece({ text, dim: piece.dim, color: piece.color });
   };
 
   const atLineStart = () => {
@@ -258,7 +239,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
         for (const char of unit) {
           const charWidthValue = charWidth(char.codePointAt(0) ?? 0);
           if (lineWidth + chunkWidth + charWidthValue > width) {
-            appendText({ text: chunk, dim: piece.dim, color: piece.color });
+            appendText({ text: chunk, piece });
             newLine(true);
             chunk = "";
             chunkWidth = 0;
@@ -266,7 +247,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
           chunk += char;
           chunkWidth += charWidthValue;
         }
-        appendText({ text: chunk, dim: piece.dim, color: piece.color });
+        appendText({ text: chunk, piece });
         continue;
       }
 
@@ -274,7 +255,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
         newLine(true);
         if (/^\s+$/.test(unit)) continue;
       }
-      appendText({ text: unit, dim: piece.dim, color: piece.color });
+      appendText({ text: unit, piece });
     }
   }
   newLine(false);
@@ -292,17 +273,17 @@ function wrapUtterances({
 }) {
   const rows: { pieces: Piece[]; tag?: Piece }[] = [];
 
-  for (const utterance of utterances) {
+  for (let u = utterances.length - 1; u >= 0 && rows.length < maxLines; u -= 1) {
+    const utterance = utterances[u]!;
     const pieces: Piece[] = [];
     let tag: Piece | undefined;
     let indent = 0;
     if (utterance.speaker !== undefined) {
-      const color = speakerColor(utterance.speaker);
       tag = {
         text: `[S${utterance.speaker}] `,
         dim: false,
         tag: true,
-        ...(color !== undefined ? { color } : {}),
+        color: speakerColor(utterance.speaker),
       };
       indent = stringWidth(tag.text);
       pieces.push(tag);
@@ -312,9 +293,9 @@ function wrapUtterances({
     if (stable.length > 0) pieces.push({ text: stable, dim: false });
     if (pending.length > 0) pieces.push({ text: pending, dim: true });
 
-    for (const wrapped of wrapFlow({ pieces, width, indent })) {
-      rows.push({ pieces: wrapped, tag });
-    }
+    rows.unshift(
+      ...wrapFlow({ pieces, width, indent }).map((wrapped) => ({ pieces: wrapped, tag })),
+    );
   }
 
   const kept = rows.slice(-maxLines);
@@ -371,13 +352,13 @@ function StatusLine(props: {
   state: SttState;
   stateMessage?: string;
   elapsedSeconds: number;
-  focusedSpeakers?: string[];
+  focusedSpeakers: string[];
 }) {
   return (
     <Box width="100%" justifyContent="space-between">
       <Box>
         <StatusLabel state={props.state} stateMessage={props.stateMessage} />
-        {props.focusedSpeakers !== undefined && props.focusedSpeakers.length > 0 && (
+        {props.focusedSpeakers.length > 0 && (
           <Text dimColor>{` · focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
         )}
       </Box>
@@ -457,24 +438,22 @@ export function CaptionScreen(props: CaptionScreenProps) {
     if (input === "s") props.onOpenSettings();
   });
 
-  const utterances = toLines({
-    finalTokens: props.finalTokens,
-    pendingTokens: props.pendingTokens,
-    focusedSpeakers,
-  });
-  const captionLines = wrapUtterances({
-    utterances,
-    width: columns,
-    maxLines: CAPTION_LINE_COUNT,
-  });
+  const { utterances, captionLines } = useMemo(() => {
+    const utterances = toLines({
+      finalTokens: props.finalTokens,
+      pendingTokens: props.pendingTokens,
+      focusedSpeakers,
+    });
+    return {
+      utterances,
+      captionLines: wrapUtterances({ utterances, width: columns, maxLines: CAPTION_LINE_COUNT }),
+    };
+  }, [props.finalTokens, props.pendingTokens, focusedSpeakers, columns]);
   const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
-  const focusedSpeakerIds = formatFocusLabel(focusedSpeakers);
+  const focusedSpeakerIds = sortSpeakerIds(focusedSpeakers);
   const focusEmpty = focusedSpeakers.size > 0 && utterances.length === 0 && !props.ended;
-  const heardIds = heardSpeakerIds([...props.finalTokens, ...props.pendingTokens]);
-  const liveHints =
-    props.state === "paused"
-      ? "p resume · 1-9 speaker · 0 all · m mic · s settings · ESC end"
-      : "p pause · 1-9 speaker · 0 all · m mic · s settings · ESC end";
+  const heardIds = focusEmpty ? heardSpeakerIds([props.finalTokens, props.pendingTokens]) : [];
+  const liveHints = `p ${props.state === "paused" ? "resume" : "pause"} · 1-9 speaker · 0 all · m mic · s settings · ESC end`;
 
   return (
     <Box flexDirection="column">
@@ -494,47 +473,35 @@ export function CaptionScreen(props: CaptionScreenProps) {
           loading={props.overlay.loading}
           error={props.overlay.error}
           onPick={props.onPickMicrophone}
-          onCancel={props.onCloseMicrophones}
+          onCancel={props.onCloseOverlay}
         />
       ) : props.overlay.kind === "settings" ? (
         <SettingsScreen
-          microphones={props.overlay.microphones}
-          microphonesLoading={props.overlay.microphonesLoading}
-          currentMicrophone={props.overlay.currentMicrophone}
-          region={props.overlay.region}
-          languages={props.overlay.languages}
-          hasApiKey={props.overlay.hasApiKey}
-          notice={props.overlay.notice}
+          {...props.overlay}
           exitLabel="ESC back"
           onPickMicrophone={props.onSettingsPickMicrophone}
           onPickLanguages={props.onSettingsPickLanguages}
           onPickRegion={props.onSettingsPickRegion}
           onChangeApiKey={props.onSettingsChangeApiKey}
           onDeleteApiKey={props.onSettingsDeleteApiKey}
-          onExit={props.onCloseSettings}
+          onExit={props.onCloseOverlay}
         />
       ) : (
         <Box flexDirection="column" height={CAPTION_LINE_COUNT} justifyContent="flex-end">
           {focusEmpty ? (
             <Text dimColor>
-              {`No speech from ${formatSpeakerIds(focusedSpeakerIds ?? [])}${
+              {`No speech from ${formatSpeakerIds(focusedSpeakerIds)}${
                 heardIds.length > 0 ? ` · heard ${formatSpeakerIds(heardIds)}` : ""
               } · 0 show all`}
             </Text>
           ) : (
             captionLines.map((line, index) => (
               <Text key={index}>
-                {line.map((piece, pieceIndex) =>
-                  piece.color !== undefined ? (
-                    <Text key={pieceIndex} dimColor={piece.dim} color={piece.color}>
-                      {piece.text}
-                    </Text>
-                  ) : (
-                    <Text key={pieceIndex} dimColor={piece.dim}>
-                      {piece.text}
-                    </Text>
-                  ),
-                )}
+                {line.map((piece, pieceIndex) => (
+                  <Text key={pieceIndex} dimColor={piece.dim} color={piece.color}>
+                    {piece.text}
+                  </Text>
+                ))}
               </Text>
             ))
           )}

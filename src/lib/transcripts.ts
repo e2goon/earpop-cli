@@ -1,12 +1,10 @@
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
-
-import { transcriptsDir } from "#/lib/journal.js";
+import { transcriptPath, transcriptsDir } from "#/lib/journal.js";
 import type { Token } from "#/lib/types.js";
 
 const PARAGRAPH_GAP_MS = 2_000;
 
-export interface TranscriptSummary {
+interface TranscriptSummary {
   id: string;
   startedAt: string;
   tokenCount: number;
@@ -31,10 +29,6 @@ interface ParsedLine {
   model?: unknown;
 }
 
-function pathOf(id: string) {
-  return join(transcriptsDir(), `${id}.jsonl`);
-}
-
 function assertValidId(id: string) {
   if (!/^[\w][\w.-]*$/.test(id)) {
     throw new Error(`Invalid transcript ID: ${id}`);
@@ -56,7 +50,7 @@ function parseLine(raw: string) {
 }
 
 async function readLines(id: string) {
-  const content = await readFile(pathOf(id), "utf8");
+  const content = await readFile(transcriptPath(id), "utf8");
   return content
     .split("\n")
     .map(parseLine)
@@ -72,26 +66,31 @@ export async function listTranscripts() {
     return [];
   }
 
-  const summaries: TranscriptSummary[] = [];
-  for (const name of names) {
-    if (!name.endsWith(".jsonl")) continue;
-    const id = name.slice(0, -".jsonl".length);
-    try {
-      const lines = await readLines(id);
-      const meeting = lines.find((line) => line.kind === "meeting");
-      summaries.push({
-        id,
-        startedAt: typeof meeting?.started_at === "string" ? meeting.started_at : "(no timestamp)",
-        tokenCount: lines.filter((line) => line.kind === "token").length,
-      });
-    } catch {}
-  }
-
+  const results = await Promise.all(
+    names
+      .filter((name) => name.endsWith(".jsonl"))
+      .map(async (name): Promise<TranscriptSummary | null> => {
+        const id = name.slice(0, -".jsonl".length);
+        try {
+          const lines = await readLines(id);
+          const meeting = lines.find((line) => line.kind === "meeting");
+          return {
+            id,
+            startedAt:
+              typeof meeting?.started_at === "string" ? meeting.started_at : "(no timestamp)",
+            tokenCount: lines.filter((line) => line.kind === "token").length,
+          };
+        } catch {
+          return null;
+        }
+      }),
+  );
+  const summaries = results.filter((summary) => summary !== null);
   summaries.sort((a, b) => b.id.localeCompare(a.id));
   return summaries;
 }
 
-export async function readTranscript(id: string) {
+async function readTranscript(id: string) {
   assertValidId(id);
   const lines = await readLines(id);
   const meeting = lines.find((line) => line.kind === "meeting");
@@ -100,7 +99,10 @@ export async function readTranscript(id: string) {
   for (const line of lines) {
     if (line.kind !== "token") continue;
     if (typeof line.text !== "string" || typeof line.at_ms !== "number") continue;
-    const token: TranscriptToken = { ...toTokenFields(line), atMs: line.at_ms };
+    const token: TranscriptToken = { text: line.text, isFinal: true, atMs: line.at_ms };
+    if (typeof line.speaker === "string") token.speaker = line.speaker;
+    if (typeof line.language === "string") token.language = line.language;
+    if (typeof line.end_ms === "number") token.endMs = line.end_ms;
     tokens.push(token);
   }
 
@@ -109,14 +111,6 @@ export async function readTranscript(id: string) {
     model: typeof meeting?.model === "string" ? meeting.model : "",
     tokens,
   } satisfies Transcript;
-}
-
-function toTokenFields(line: ParsedLine) {
-  const token: Token = { text: line.text as string, isFinal: true };
-  if (typeof line.speaker === "string") token.speaker = line.speaker;
-  if (typeof line.language === "string") token.language = line.language;
-  if (typeof line.end_ms === "number") token.endMs = line.end_ms;
-  return token;
 }
 
 function formatStamp(ms: number) {
@@ -131,7 +125,6 @@ function formatStamp(ms: number) {
 }
 
 export async function exportText(id: string) {
-  assertValidId(id);
   const transcript = await readTranscript(id);
 
   interface Paragraph {
@@ -145,11 +138,11 @@ export async function exportText(id: string) {
   for (const token of transcript.tokens) {
     if (token.text.trim() === "") continue;
     const previous = paragraphs.at(-1);
-
-    const speakerChanged = previous !== undefined && token.speaker !== previous.speaker;
-    const gapExceeded = previous !== undefined && token.atMs - previous.lastAtMs > PARAGRAPH_GAP_MS;
-
-    if (previous === undefined || speakerChanged || gapExceeded) {
+    if (
+      previous === undefined ||
+      token.speaker !== previous.speaker ||
+      token.atMs - previous.lastAtMs > PARAGRAPH_GAP_MS
+    ) {
       paragraphs.push({
         startMs: token.atMs,
         lastAtMs: token.atMs,
