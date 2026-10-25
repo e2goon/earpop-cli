@@ -1,6 +1,6 @@
 import { Spinner } from "@inkjs/ui";
-import { Text, useInput, useWindowSize, Box } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { Text, useBoxMetrics, useInput, useWindowSize, Box, type DOMElement } from "ink";
+import { useEffect, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
@@ -193,13 +193,23 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
     }
   };
 
-  const appendPiece = (piece: Piece) => {
+  const appendPiece = ({ piece, pieceWidth }: { piece: Piece; pieceWidth: number }) => {
     line.push(piece);
-    lineWidth += stringWidth(piece.text);
+    lineWidth += pieceWidth;
   };
 
-  const appendText = ({ text, piece }: { text: string; piece: Piece }) => {
-    if (text.length > 0) appendPiece({ text, dim: piece.dim, color: piece.color });
+  const appendText = ({
+    text,
+    textWidth,
+    piece,
+  }: {
+    text: string;
+    textWidth: number;
+    piece: Piece;
+  }) => {
+    if (text.length > 0) {
+      appendPiece({ piece: { text, dim: piece.dim, color: piece.color }, pieceWidth: textWidth });
+    }
   };
 
   const atLineStart = () => {
@@ -209,7 +219,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
 
   for (const piece of pieces) {
     if (piece.tag === true) {
-      appendPiece(piece);
+      appendPiece({ piece, pieceWidth: stringWidth(piece.text) });
       continue;
     }
 
@@ -226,7 +236,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
         for (const char of graphemes(unit)) {
           const charWidthValue = stringWidth(char);
           if (lineWidth + chunkWidth + charWidthValue > width) {
-            appendText({ text: chunk, piece });
+            appendText({ text: chunk, textWidth: chunkWidth, piece });
             newLine(true);
             chunk = "";
             chunkWidth = 0;
@@ -234,7 +244,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
           chunk += char;
           chunkWidth += charWidthValue;
         }
-        appendText({ text: chunk, piece });
+        appendText({ text: chunk, textWidth: chunkWidth, piece });
         continue;
       }
 
@@ -242,7 +252,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
         newLine(true);
         if (/^\s+$/.test(unit)) continue;
       }
-      appendText({ text: unit, piece });
+      appendText({ text: unit, textWidth: unitWidth, piece });
     }
   }
   newLine(false);
@@ -448,7 +458,12 @@ export function CaptionScreen(props: CaptionScreenProps) {
   }, [historyTokens, focusedSpeakers, columns]);
 
   const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
-  const historyHeight = Math.max(CAPTION_LINE_COUNT, rows - (showPath ? 3 : 2));
+  const historyBoxRef = useRef<DOMElement>(null);
+  const historyBox = useBoxMetrics(historyBoxRef);
+  const historyHeight =
+    historyBox.hasMeasured && historyBox.height > 0
+      ? historyBox.height
+      : Math.max(CAPTION_LINE_COUNT, rows - (showPath ? 3 : 2));
   const maxOffset = Math.max(0, historyRows.length - historyHeight);
   const offset = Math.min(history?.offset ?? 0, maxOffset);
   const top = Math.max(0, historyRows.length - historyHeight - offset);
@@ -547,7 +562,14 @@ export function CaptionScreen(props: CaptionScreenProps) {
           onExit={props.onCloseOverlay}
         />
       ) : history !== null ? (
-        <Box flexDirection="column" height={historyHeight} justifyContent="flex-end">
+        <Box
+          ref={historyBoxRef}
+          flexDirection="column"
+          flexGrow={1}
+          flexBasis={0}
+          overflow="hidden"
+          justifyContent="flex-end"
+        >
           {historyRows.slice(top, top + historyHeight).map((line, index) => (
             <CaptionRow key={top + index} line={line} />
           ))}

@@ -1,9 +1,10 @@
-import { ConfirmInput, PasswordInput, Select } from "@inkjs/ui";
+import { ConfirmInput, PasswordInput } from "@inkjs/ui";
 import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 
 import { LanguageSelect } from "#/components/language-select.js";
 import { MicrophoneSelect } from "#/components/microphone-select.js";
+import { Select } from "#/components/select.js";
 import { languageHintLabel, type SttLanguage } from "#/lib/languages.js";
 import { DEFAULT_REGION, REGIONS } from "#/lib/region.js";
 import type { Microphone, SttRegion } from "#/lib/types.js";

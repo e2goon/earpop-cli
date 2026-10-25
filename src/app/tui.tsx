@@ -7,5 +7,10 @@ import { SettingsApp } from "#/app/settings-app.js";
 
 export function runTui(screen: "live" | "settings") {
   installInterruptListeners();
-  registerApp(render(screen === "live" ? <LiveApp /> : <SettingsApp />, { exitOnCtrlC: false }));
+  registerApp(
+    render(screen === "live" ? <LiveApp /> : <SettingsApp />, {
+      exitOnCtrlC: false,
+      incrementalRendering: true,
+    }),
+  );
 }

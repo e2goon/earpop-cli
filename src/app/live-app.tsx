@@ -76,12 +76,6 @@ export function LiveApp() {
   // transcript is finalized. Third press: exit immediately.
   const sessionEndedRef = useRef(false);
   const exitStartedRef = useRef(false);
-  const stopRef = useRef<Promise<void> | null>(null);
-
-  const stopController = () => {
-    stopRef.current ??= controllerRef.current?.stop().catch(() => {}) ?? Promise.resolve();
-    return stopRef.current;
-  };
 
   const copyJournalPath = () => {
     if (journalPath !== null) copyWithFallback(journalPath);
@@ -102,7 +96,9 @@ export function LiveApp() {
     if (sessionEndedRef.current || phase === "fatal") {
       exitStartedRef.current = true;
       setFinishing(true);
-      void stopController().then(finish);
+      void Promise.resolve(controllerRef.current?.stop())
+        .catch(() => {})
+        .then(finish);
       return;
     }
 
@@ -115,7 +111,7 @@ export function LiveApp() {
       finish();
       return;
     }
-    void stopController();
+    void controllerRef.current.stop().catch(() => {});
   };
   useInterrupt(requestExit);
 
@@ -171,32 +167,25 @@ export function LiveApp() {
     setMicsLoading(false);
   }
 
-  const boot = useEffectEvent(
-    async ({ settings, isCancelled }: { settings: CliSettings; isCancelled: () => boolean }) => {
-      const savedRegion = resolveRegion(settings);
-      setRegion(savedRegion);
-      languageHintsRef.current = normalizeLanguageHints(settings.languages);
-      const apiKey = await loadApiKey(savedRegion);
-      if (isCancelled()) return;
-      if (apiKey === null) {
-        setPhase("region-select");
-        return;
-      }
-      const savedName = settings.microphone ?? null;
-      if (savedName === null) {
-        await chooseInitialMicrophone(null);
-        return;
-      }
-      await startLive({ region: savedRegion, apiKey, deviceName: savedName });
-    },
-  );
+  const boot = useEffectEvent(async (settings: CliSettings) => {
+    const savedRegion = resolveRegion(settings);
+    setRegion(savedRegion);
+    languageHintsRef.current = normalizeLanguageHints(settings.languages);
+    const apiKey = await loadApiKey(savedRegion);
+    if (apiKey === null) {
+      setPhase("region-select");
+      return;
+    }
+    const savedName = settings.microphone ?? null;
+    if (savedName === null) {
+      await chooseInitialMicrophone(null);
+      return;
+    }
+    await startLive({ region: savedRegion, apiKey, deviceName: savedName });
+  });
 
   useEffect(() => {
-    let cancelled = false;
-    void loadSettings().then((settings) => boot({ settings, isCancelled: () => cancelled }));
-    return () => {
-      cancelled = true;
-    };
+    void loadSettings().then((settings) => boot(settings));
   }, []);
 
   useAlternateScreen(phase === "live" || phase === "ended" || phase === "boot");

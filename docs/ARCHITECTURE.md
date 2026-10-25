@@ -14,7 +14,7 @@ UI (ink)  ←── one snapshot / setState per WS message ──  transcription
 
 - **Hot:** mic → socket → tokens → UI — no blocking.
 - **Cold:** journal, keepalive, settings — never stall hot.
-- **Journal** owns full finals; UI keeps a short tail (flat render cost).
+- **Journal** persists full finals; the controller also keeps them in memory for history scrollback. Live captions render only a short tail (flat render cost), and history renders only the visible rows.
 - Same controller modules power headless `transcripts` commands.
 
 ## Intentional STT / capture choices

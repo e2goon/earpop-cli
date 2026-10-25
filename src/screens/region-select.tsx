@@ -1,6 +1,6 @@
-import { Select } from "@inkjs/ui";
 import { Box, Text } from "ink";
 
+import { Select } from "#/components/select.js";
 import { DEFAULT_REGION, REGIONS } from "#/lib/region.js";
 import type { SttRegion } from "#/lib/types.js";
 

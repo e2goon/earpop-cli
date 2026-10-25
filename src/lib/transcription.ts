@@ -60,6 +60,7 @@ export function createTranscription({
   let connecting = false;
   // Invalidate in-flight startSession() so soft-reconnect cannot adopt a stale socket.
   let connectGeneration = 0;
+  const closingSessions = new Set<Promise<void>>();
 
   let paused = false;
   let pausedAtMs = 0;
@@ -72,9 +73,10 @@ export function createTranscription({
   let stateMessage: string | undefined;
   let notice: string | undefined;
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-  let finalTokens: Token[] = [];
-  let finalChars = 0;
   const history: Token[] = [];
+  let tailStart = 0;
+  let tailChars = 0;
+  let finalTokens: Token[] = [];
   let pendingTokens: Token[] = [];
   let speechContext = "";
   let startedAtMs = 0;
@@ -145,15 +147,14 @@ export function createTranscription({
     return [{ ...first, text: ` ${first.text}` }, ...tokens.slice(1)];
   }
 
-  function pushTail(tokens: Token[]) {
-    const next = finalTokens.concat(tokens);
-    for (const token of tokens) finalChars += token.text.length;
-    let drop = 0;
-    while (finalChars > TAIL_CHARS && next.length - drop > 1) {
-      finalChars -= next[drop]!.text.length;
-      drop += 1;
+  function addFinals(tokens: Token[]) {
+    history.push(...tokens);
+    for (const token of tokens) tailChars += token.text.length;
+    while (tailChars > TAIL_CHARS && history.length - tailStart > 1) {
+      tailChars -= history[tailStart]!.text.length;
+      tailStart += 1;
     }
-    finalTokens = drop > 0 ? next.slice(drop) : next;
+    finalTokens = history.slice(tailStart);
   }
 
   function clearTimers() {
@@ -210,8 +211,7 @@ export function createTranscription({
               const final = sessionHasFinal ? event.final : spaceAfterPrevious(event.final);
               sessionHasFinal = true;
               journal.tokens({ tokens: final, offsetMs });
-              history.push(...final);
-              pushTail(final);
+              addFinals(final);
               speechContext = appendSttContext({ text: speechContext, tokens: final });
             }
             // A replaced session still delivers its last finals; only the current one owns the provisional line.
@@ -289,21 +289,24 @@ export function createTranscription({
   }
 
   function releaseSession() {
-    const closing = session;
+    if (session === null) return;
+    const closed = session.stop().catch(() => {});
     session = null;
-    void closing?.stop().catch(() => {});
+    closingSessions.add(closed);
+    void closed.then(() => closingSessions.delete(closed));
   }
 
-  async function teardownIO() {
+  async function stopCapture() {
     try {
       await capture?.stop();
     } catch {}
     capture = null;
+  }
 
-    try {
-      await session?.stop();
-    } catch {}
-    session = null;
+  async function teardownIO() {
+    await stopCapture();
+    releaseSession();
+    await Promise.all(closingSessions);
   }
 
   return {
@@ -334,10 +337,7 @@ export function createTranscription({
           clearTimers();
           emit(true);
           releaseSession();
-          try {
-            await capture?.stop();
-          } catch {}
-          capture = null;
+          await stopCapture();
           return;
         }
 
@@ -412,11 +412,7 @@ export function createTranscription({
         languageHints = next;
         await saveSettings({ languages: next });
         flash(`Languages set to ${languageHintLabel(next)}`);
-
-        if (paused) {
-          emit(true);
-          return;
-        }
+        if (paused) return;
 
         if (reconnectTimer !== null) {
           clearTimeout(reconnectTimer);
@@ -439,7 +435,7 @@ export function createTranscription({
         connectGeneration += 1;
         clearTimers();
 
-        // Not stopped yet: the session's last finals arrive while it closes and must reach the journal.
+        // Not stopped yet: closing sessions still deliver their last finals, which must reach the journal.
         await teardownIO();
         stopped = true;
         if (noticeTimer !== null) clearTimeout(noticeTimer);
