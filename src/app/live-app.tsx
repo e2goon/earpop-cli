@@ -13,14 +13,14 @@ import { deleteApiKey, loadApiKey, saveApiKey } from "#/lib/api-key.js";
 import { errorMessage } from "#/lib/errors.js";
 import { openJournal } from "#/lib/journal.js";
 import {
-  DEFAULT_LANGUAGE_HINTS,
   languageHintLabel,
   normalizeLanguageHints,
+  translationLabel,
   type SttLanguage,
 } from "#/lib/languages.js";
 import { listMicrophones } from "#/lib/microphones.js";
 import { regionLabel, resolveRegion } from "#/lib/region.js";
-import { saveSettings, loadSettings } from "#/lib/settings.js";
+import { fitTerms, saveSettings, loadSettings } from "#/lib/settings.js";
 import { STT_MODEL } from "#/lib/soniox.js";
 import { verifyApiKey } from "#/lib/verify-key.js";
 import type { CliSettings, Microphone, SttRegion } from "#/lib/types.js";
@@ -49,7 +49,7 @@ function FatalScreen(props: { message: string; onQuit: () => void }) {
 
 type SettingsOverlay = Extract<CaptionOverlay, { kind: "settings" }>;
 
-export function LiveApp() {
+export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLanguage[] }) {
   const [phase, setPhase] = useState<LivePhase>("boot");
   const [verifying, setVerifying] = useState(false);
   const [keyError, setKeyError] = useState<string | undefined>();
@@ -64,7 +64,10 @@ export function LiveApp() {
   const [finishing, setFinishing] = useState(false);
 
   const controllerRef = useRef<TranscriptionController | null>(null);
-  const languageHintsRef = useRef<SttLanguage[]>([...DEFAULT_LANGUAGE_HINTS]);
+  // Session options read once at boot; the controller owns them afterwards (see snapshot).
+  const languageHintsRef = useRef<SttLanguage[]>([]);
+  const termsRef = useRef<string[]>([]);
+  const translationRef = useRef<SttLanguage[]>([]);
   // Invalidate in-flight overlay loads when the overlay closes or is replaced.
   const overlayEpochRef = useRef(0);
 
@@ -135,6 +138,8 @@ export function LiveApp() {
         clientReferenceId: journal.id,
         region: liveRegion,
         languageHints: languageHintsRef.current,
+        terms: termsRef.current,
+        translation: translationRef.current,
         onSnapshot: setSnapshot,
         onFatal: failFatal,
       });
@@ -170,7 +175,10 @@ export function LiveApp() {
   const boot = useEffectEvent(async (settings: CliSettings) => {
     const savedRegion = resolveRegion(settings);
     setRegion(savedRegion);
-    languageHintsRef.current = normalizeLanguageHints(settings.languages);
+    // --lang and --translate apply to this run only; picking them in settings still saves them.
+    languageHintsRef.current = props.languages ?? normalizeLanguageHints(settings.languages);
+    termsRef.current = fitTerms(settings.terms ?? []);
+    translationRef.current = props.translation ?? settings.translation ?? [];
     const apiKey = await loadApiKey(savedRegion);
     if (apiKey === null) {
       setPhase("region-select");
@@ -324,7 +332,8 @@ export function LiveApp() {
           microphonesLoading: true,
           currentMicrophone: snapshot.device,
           region,
-          languages: languageHintsRef.current,
+          languages: snapshot.languages,
+          translation: snapshot.translation,
           hasApiKey: true,
         });
         void (async () => {
@@ -339,8 +348,9 @@ export function LiveApp() {
             microphonesLoading: false,
             currentMicrophone: settings.microphone ?? snapshot.device,
             region: resolved,
-            // Live session hints are source of truth while connected.
-            languages: languageHintsRef.current,
+            // The controller owns languages and translation while connected.
+            languages: snapshot.languages,
+            translation: snapshot.translation,
             hasApiKey: key !== null,
           });
         })();
@@ -359,7 +369,6 @@ export function LiveApp() {
           .catch(failSettings("set microphone"));
       }}
       onSettingsPickLanguages={(codes) => {
-        languageHintsRef.current = codes;
         void controllerRef.current
           ?.setLanguageHints(codes)
           .then(() =>
@@ -372,6 +381,22 @@ export function LiveApp() {
             patchSettings({
               languages: codes,
               notice: `Failed to set languages: ${errorMessage(error)}`,
+            }),
+          );
+      }}
+      onSettingsPickTranslation={(codes) => {
+        void controllerRef.current
+          ?.setTranslation(codes)
+          .then(() =>
+            patchSettings({
+              translation: codes,
+              notice: `Translation: ${translationLabel(codes)}`,
+            }),
+          )
+          .catch((error: unknown) =>
+            patchSettings({
+              translation: codes,
+              notice: `Failed to set translation: ${errorMessage(error)}`,
             }),
           );
       }}

@@ -1,6 +1,13 @@
 import { startCapture } from "#/lib/audio.js";
 import { errorMessage } from "#/lib/errors.js";
-import { languageHintLabel, normalizeLanguageHints, type SttLanguage } from "#/lib/languages.js";
+import {
+  languageHintLabel,
+  NO_SPACE_SCRIPT,
+  normalizeLanguageHints,
+  normalizeTranslation,
+  translationLabel,
+  type SttLanguage,
+} from "#/lib/languages.js";
 import { createSerialQueue } from "#/lib/serial-queue.js";
 import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
@@ -16,8 +23,6 @@ const BACKOFF_MAX_MS = 30_000;
 const BACKOFF_STABLE_MS = 30_000;
 const NOTICE_MS = 4_000;
 const MIC_LOST = "Press m to choose another microphone";
-const NO_SPACE_SCRIPT =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 type LiveState = Exclude<SttState, "stopped">;
 
@@ -26,6 +31,8 @@ export interface TranscriptionSnapshot {
   stateMessage?: string;
   notice?: string;
   device: string;
+  languages: SttLanguage[];
+  translation: SttLanguage[];
   finalTokens: Token[];
   pendingTokens: Token[];
   elapsedSeconds: number;
@@ -38,6 +45,8 @@ interface TranscriptionOptions {
   clientReferenceId: string;
   region?: SttRegion;
   languageHints?: SttLanguage[];
+  terms?: string[];
+  translation?: SttLanguage[];
   onSnapshot: (snapshot: TranscriptionSnapshot) => void;
   onFatal: (message: string) => void;
 }
@@ -51,11 +60,14 @@ export function createTranscription({
   clientReferenceId,
   region,
   languageHints: languageHintsOption,
+  terms,
+  translation: translationOption,
   onSnapshot,
   onFatal,
 }: TranscriptionOptions) {
   let device = deviceOption ?? "default";
   let languageHints = normalizeLanguageHints(languageHintsOption);
+  let translation = normalizeTranslation(translationOption);
   let capture: AudioCapture | null = null;
   let session: SttSession | null = null;
 
@@ -69,7 +81,7 @@ export function createTranscription({
   let pausedAtMs = 0;
   let pausedTotalMs = 0;
 
-  // Serialize togglePause/switchMicrophone/setLanguageHints/stop — overlapping ops can open capture atop teardown.
+  // Serialize togglePause/switchMicrophone/setLanguageHints/setTranslation/stop — overlapping ops can open capture atop teardown.
   const enqueue = createSerialQueue();
 
   let state: LiveState = "connecting";
@@ -98,6 +110,8 @@ export function createTranscription({
       stateMessage,
       notice,
       device,
+      languages: languageHints,
+      translation,
       finalTokens,
       pendingTokens,
       elapsedSeconds:
@@ -215,6 +229,8 @@ export function createTranscription({
         region,
         languageHints,
         contextText: speechContext,
+        terms,
+        translation,
         onEvent: (event) => {
           if (stopped) return;
           if (event.type === "tokens") {
@@ -223,7 +239,11 @@ export function createTranscription({
               sessionHasFinal = true;
               journal.tokens({ tokens: final, offsetMs });
               addFinals(final);
-              speechContext = appendSttContext({ text: speechContext, tokens: final });
+              // Only speech biases recognition; translated text would skew it toward the target.
+              speechContext = appendSttContext({
+                text: speechContext,
+                tokens: final.filter((token) => token.translation !== true),
+              });
             }
             // A replaced session still delivers its last finals; only the current one owns the provisional line.
             if (generation === connectGeneration) {
@@ -318,6 +338,23 @@ export function createTranscription({
       await capture?.stop();
     } catch {}
     capture = null;
+  }
+
+  // Session options changed: open a replacement session, keeping the microphone running.
+  async function restartSession() {
+    if (paused) return;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    // Drop provisional captions from the previous session.
+    pendingTokens = [];
+    // Invalidate any in-flight connect() before opening a replacement session.
+    connectGeneration += 1;
+    connecting = false;
+    releaseSession();
+    emit(true);
+    await connect();
   }
 
   async function teardownIO() {
@@ -415,25 +452,26 @@ export function createTranscription({
       return enqueue(async () => {
         if (stopped) return;
         const next = normalizeLanguageHints(codes);
-        if (sameLanguageHints(languageHints, next)) return;
+        if (sameCodes(languageHints, next)) return;
 
-        languageHints = next;
+        // Save first: a failed save leaves the running session and snapshot unchanged.
         await saveSettings({ languages: next });
+        languageHints = next;
         flash(`Languages set to ${languageHintLabel(next)}`);
-        if (paused) return;
+        await restartSession();
+      });
+    },
 
-        if (reconnectTimer !== null) {
-          clearTimeout(reconnectTimer);
-          reconnectTimer = null;
-        }
-        // Drop provisional captions from the previous language session.
-        pendingTokens = [];
-        // Invalidate any in-flight connect() before opening a replacement session.
-        connectGeneration += 1;
-        connecting = false;
-        releaseSession();
-        emit(true);
-        await connect();
+    setTranslation(codes: SttLanguage[]) {
+      return enqueue(async () => {
+        if (stopped) return;
+        const next = normalizeTranslation(codes);
+        if (sameCodes(translation, next)) return;
+
+        await saveSettings({ translation: next });
+        translation = next;
+        flash(`Translation: ${translationLabel(next)}`);
+        await restartSession();
       });
     },
 
@@ -453,7 +491,7 @@ export function createTranscription({
   };
 }
 
-function sameLanguageHints(a: SttLanguage[], b: SttLanguage[]) {
+function sameCodes(a: SttLanguage[], b: SttLanguage[]) {
   if (a.length !== b.length) return false;
   const other = new Set(b);
   return a.every((code) => other.has(code));

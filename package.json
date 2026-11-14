@@ -38,6 +38,7 @@
     "capture:check": "node scripts/publish-capture.mjs",
     "release": "node scripts/release.mjs",
     "check": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",

@@ -1,9 +1,9 @@
 import { Spinner } from "@inkjs/ui";
 import { Text, useBoxMetrics, useInput, useWindowSize, Box, type DOMElement } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
-import stringWidth from "string-width";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
+import { toLines, wrapUtterances, type Piece } from "#/lib/caption-layout.js";
 import { shortPath } from "#/lib/clipboard.js";
 import type { SttLanguage } from "#/lib/languages.js";
 import type { Microphone, SttRegion, SttState, Token } from "#/lib/types.js";
@@ -19,6 +19,7 @@ export type CaptionOverlay =
       | "currentMicrophone"
       | "region"
       | "languages"
+      | "translation"
       | "hasApiKey"
       | "notice"
     >);
@@ -28,6 +29,8 @@ interface CaptionScreenProps {
   stateMessage?: string;
   notice?: string;
   device: string;
+  languages: SttLanguage[];
+  translation: SttLanguage[];
   finalTokens: Token[];
   pendingTokens: Token[];
   elapsedSeconds: number;
@@ -44,6 +47,7 @@ interface CaptionScreenProps {
   onCloseOverlay: () => void;
   onSettingsPickMicrophone: (name: string) => void;
   onSettingsPickLanguages: (codes: SttLanguage[]) => void;
+  onSettingsPickTranslation: (codes: SttLanguage[]) => void;
   onSettingsPickRegion: (region: SttRegion) => void;
   onSettingsChangeApiKey: (key: string) => void;
   onSettingsDeleteApiKey: () => void;
@@ -52,46 +56,6 @@ interface CaptionScreenProps {
 const CAPTION_LINE_COUNT = 6;
 const END_CONFIRM_MS = 2_000;
 const CAPTION_TAIL_CHARS = 1200;
-
-/** Fixed palette for speaker tags S1–S9 (Ink named colors). */
-const SPEAKER_COLORS = [
-  "cyan",
-  "yellow",
-  "magenta",
-  "green",
-  "blue",
-  "red",
-  "white",
-  "cyanBright",
-  "yellowBright",
-] as const;
-
-type SpeakerColor = (typeof SPEAKER_COLORS)[number];
-
-interface Utterance {
-  speaker?: string;
-  stable: string;
-  pending: string;
-}
-
-interface Piece {
-  text: string;
-  dim: boolean;
-  color?: SpeakerColor;
-  tag?: boolean;
-}
-
-function speakerColor(speaker: string) {
-  const index = Number(speaker);
-  if (!Number.isInteger(index) || index < 1 || index > 9) return undefined;
-  return SPEAKER_COLORS[index - 1];
-}
-
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-function graphemes(text: string) {
-  return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
-}
 
 function sortSpeakerIds(ids: Iterable<string>) {
   return [...ids].sort((a, b) => Number(a) - Number(b));
@@ -107,237 +71,19 @@ function heardSpeakerIds(tokenLists: Token[][]) {
   return sortSpeakerIds(heard);
 }
 
+// In order of first appearance.
+function heardLanguages(tokenLists: Token[][]) {
+  const heard = new Set<string>();
+  for (const tokens of tokenLists) {
+    for (const token of tokens) {
+      if (token.language !== undefined && token.text.trim() !== "") heard.add(token.language);
+    }
+  }
+  return [...heard];
+}
+
 function formatSpeakerIds(ids: string[]) {
   return ids.map((id) => `S${id}`).join(", ");
-}
-
-function endsSentence(text: string) {
-  const trimmed = text.trimEnd();
-  if (trimmed === "") return false;
-
-  const last = trimmed.at(-1) ?? "";
-  if ("?!。？！".includes(last)) return true;
-
-  // "1." / "Dr." stay on this line; a period only ends a sentence when the token has trailing space.
-  return last === "." && text !== trimmed;
-}
-
-function toLines({
-  finalTokens,
-  pendingTokens,
-  focusedSpeakers,
-  tailChars,
-}: {
-  finalTokens: Token[];
-  pendingTokens: Token[];
-  focusedSpeakers: ReadonlySet<string>;
-  tailChars: number;
-}) {
-  const lines: Utterance[] = [];
-  let speaker: string | undefined;
-  let stable = "";
-  let tail = "";
-  let closed = false;
-
-  const push = () => {
-    if (stable.trim() === "" && tail.trim() === "") return;
-    lines.push({ speaker, stable, pending: tail });
-    stable = "";
-    tail = "";
-    closed = false;
-  };
-
-  const eat = ({ token, pending }: { token: Token; pending: boolean }) => {
-    if (
-      focusedSpeakers.size > 0 &&
-      (token.speaker === undefined || !focusedSpeakers.has(token.speaker))
-    ) {
-      return;
-    }
-    const next = token.speaker;
-    if (closed || (next !== undefined && next !== speaker)) push();
-    if (next !== undefined) speaker = next;
-    if (pending) tail += token.text;
-    else stable += token.text;
-    closed = endsSentence(token.text);
-  };
-
-  let start = finalTokens.length;
-  for (let used = 0; start > 0 && used < tailChars; start -= 1) {
-    used += finalTokens[start - 1]!.text.length;
-  }
-  for (let i = start; i < finalTokens.length; i += 1) {
-    eat({ token: finalTokens[i]!, pending: false });
-  }
-  for (const token of pendingTokens) {
-    eat({ token, pending: true });
-  }
-  push();
-  return lines;
-}
-
-function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; indent: number }) {
-  const lines: Piece[][] = [];
-  let line: Piece[] = [];
-  let lineWidth = 0;
-
-  const padOnly = () => indent > 0 && line.length === 1 && line[0]!.text.trim() === "";
-
-  const newLine = (continuation: boolean) => {
-    if (line.length > 0 && !padOnly()) lines.push(line);
-    line = [];
-    lineWidth = 0;
-    if (continuation && indent > 0) {
-      line.push({ text: " ".repeat(indent), dim: false });
-      lineWidth = indent;
-    }
-  };
-
-  const appendPiece = ({ piece, pieceWidth }: { piece: Piece; pieceWidth: number }) => {
-    line.push(piece);
-    lineWidth += pieceWidth;
-  };
-
-  const appendText = ({
-    text,
-    textWidth,
-    piece,
-  }: {
-    text: string;
-    textWidth: number;
-    piece: Piece;
-  }) => {
-    if (text.length > 0) {
-      appendPiece({ piece: { text, dim: piece.dim, color: piece.color }, pieceWidth: textWidth });
-    }
-  };
-
-  const atLineStart = () => {
-    const last = line.at(-1);
-    return lineWidth === 0 || padOnly() || last?.tag === true;
-  };
-
-  for (const piece of pieces) {
-    if (piece.tag === true) {
-      appendPiece({ piece, pieceWidth: stringWidth(piece.text) });
-      continue;
-    }
-
-    const units = piece.text.match(/\s+|\S+/g) ?? [];
-    for (const unit of units) {
-      if (/^\s+$/.test(unit) && atLineStart()) continue;
-
-      const unitWidth = stringWidth(unit);
-
-      if (unitWidth > width) {
-        newLine(true);
-        let chunk = "";
-        let chunkWidth = 0;
-        for (const char of graphemes(unit)) {
-          const charWidthValue = stringWidth(char);
-          if (lineWidth + chunkWidth + charWidthValue > width) {
-            appendText({ text: chunk, textWidth: chunkWidth, piece });
-            newLine(true);
-            chunk = "";
-            chunkWidth = 0;
-          }
-          chunk += char;
-          chunkWidth += charWidthValue;
-        }
-        appendText({ text: chunk, textWidth: chunkWidth, piece });
-        continue;
-      }
-
-      if (lineWidth + unitWidth > width) {
-        newLine(true);
-        if (/^\s+$/.test(unit)) continue;
-      }
-      appendText({ text: unit, textWidth: unitWidth, piece });
-    }
-  }
-  newLine(false);
-  return lines;
-}
-
-function wrapUtterances({
-  utterances,
-  width,
-  maxLines,
-}: {
-  utterances: Utterance[];
-  width: number;
-  maxLines: number;
-}) {
-  const chunks: { pieces: Piece[]; tag?: Piece }[][] = [];
-  let rowCount = 0;
-
-  for (let u = utterances.length - 1; u >= 0 && rowCount < maxLines; u -= 1) {
-    const utterance = utterances[u]!;
-    const pieces: Piece[] = [];
-    let tag: Piece | undefined;
-    let indent = 0;
-    if (utterance.speaker !== undefined) {
-      tag = {
-        text: `[S${utterance.speaker}] `,
-        dim: false,
-        tag: true,
-        color: speakerColor(utterance.speaker),
-      };
-      indent = stringWidth(tag.text);
-      pieces.push(tag);
-    }
-    const stable = utterance.stable.trimStart();
-    const pending = stable.length === 0 ? utterance.pending.trimStart() : utterance.pending;
-    if (stable.length > 0) pieces.push({ text: stable, dim: false });
-    if (pending.length > 0) pieces.push({ text: pending, dim: true });
-
-    const chunk = wrapFlow({ pieces, width, indent }).map((wrapped) => ({ pieces: wrapped, tag }));
-    chunks.push(chunk);
-    rowCount += chunk.length;
-  }
-
-  const kept = chunks.reverse().flat().slice(-maxLines);
-  if (kept.length === 0) return [];
-
-  const first = kept[0]!;
-  if (first.tag === undefined || first.pieces[0]?.tag === true) {
-    return kept.map((row) => row.pieces);
-  }
-
-  const tagWidth = stringWidth(first.tag.text);
-  const bodyWidth = width - tagWidth;
-  if (bodyWidth <= 0) return [[first.tag], ...kept.slice(1).map((row) => row.pieces)];
-
-  const source =
-    first.pieces[0] !== undefined && /^\s+$/.test(first.pieces[0].text)
-      ? first.pieces.slice(1)
-      : first.pieces;
-  const body: Piece[] = [];
-  let remaining = bodyWidth;
-  for (let i = source.length - 1; i >= 0 && remaining > 0; i -= 1) {
-    const piece = source[i]!;
-    const pieceWidth = stringWidth(piece.text);
-    if (pieceWidth <= remaining) {
-      body.unshift(piece);
-      remaining -= pieceWidth;
-      continue;
-    }
-    const chars = graphemes(piece.text);
-    let start = chars.length;
-    let used = 0;
-    while (start > 0) {
-      const cw = stringWidth(chars[start - 1]!);
-      if (used + cw > remaining) break;
-      used += cw;
-      start -= 1;
-    }
-    if (start < chars.length) {
-      body.unshift({ ...piece, text: chars.slice(start).join("") });
-    }
-    remaining = 0;
-  }
-
-  return [[first.tag, ...body], ...kept.slice(1).map((row) => row.pieces)];
 }
 
 function formatElapsed(seconds: number) {
@@ -352,24 +98,28 @@ function StatusLine(props: {
   notice?: string;
   device: string;
   elapsedSeconds: number;
-  focusedSpeakers: string[];
+  focus: string[];
 }) {
   return (
     <Box width="100%" justifyContent="space-between" gap={2}>
       <Box flexShrink={1}>
-        <StatusLabel state={props.state} stateMessage={props.stateMessage} />
-        {props.focusedSpeakers.length > 0 && (
-          <Text dimColor>{`  focus: ${formatSpeakerIds(props.focusedSpeakers)}`}</Text>
-        )}
+        {/* Error text can be long, so only it may shrink; short labels stay whole. */}
+        <Box flexShrink={props.state === "error" ? 1 : 0}>
+          <StatusLabel state={props.state} stateMessage={props.stateMessage} />
+        </Box>
+        {props.focus.length > 0 && <Text dimColor>{`  focus: ${props.focus.join(", ")}`}</Text>}
         {props.notice !== undefined && <Text color="yellow">{`  ${props.notice}`}</Text>}
       </Box>
-      <Box flexShrink={0} gap={2}>
+      {/* Shrinks far faster than the state side, so a long device name truncates first. */}
+      <Box flexShrink={100} gap={2}>
         {props.device !== "default" && (
           <Text dimColor wrap="truncate-middle">
             {props.device}
           </Text>
         )}
-        <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
+        <Box flexShrink={0}>
+          <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
+        </Box>
       </Box>
     </Box>
   );
@@ -409,7 +159,7 @@ function CaptionRow(props: { line: Piece[] }) {
   return (
     <Text>
       {props.line.map((piece, index) => (
-        <Text key={index} dimColor={piece.dim} color={piece.color}>
+        <Text key={index} dimColor={piece.dim} italic={piece.italic} color={piece.color}>
           {piece.text}
         </Text>
       ))}
@@ -422,6 +172,12 @@ export function CaptionScreen(props: CaptionScreenProps) {
   const overlayOpen = props.overlay.kind !== "none";
   // Empty set = show all speakers; 1–9 toggles membership, 0 clears.
   const [focusedSpeakers, setFocusedSpeakers] = useState(() => new Set<string>());
+  // undefined = every language; l cycles through the languages heard so far.
+  const [languageFocus, setFocusedLanguage] = useState<string | undefined>();
+  // Translation always mixes languages on screen.
+  const multilingual = props.languages.length > 1 || props.translation.length > 0;
+  // Switching to a single language hides the l key, so drop a leftover language filter too.
+  const focusedLanguage = multilingual ? languageFocus : undefined;
   // null = live view; otherwise finals frozen on entry, scrolled `offset` rows up from the bottom.
   const [history, setHistory] = useState<{ tokens: Token[]; offset: number } | null>(null);
   const [confirmingEnd, setConfirmingEnd] = useState(false);
@@ -437,13 +193,26 @@ export function CaptionScreen(props: CaptionScreenProps) {
       finalTokens: props.finalTokens,
       pendingTokens: props.pendingTokens,
       focusedSpeakers,
+      focusedLanguage,
       tailChars: CAPTION_TAIL_CHARS,
     });
     return {
       utterances,
-      captionLines: wrapUtterances({ utterances, width: columns, maxLines: CAPTION_LINE_COUNT }),
+      captionLines: wrapUtterances({
+        utterances,
+        width: columns,
+        maxLines: CAPTION_LINE_COUNT,
+        showLanguage: multilingual,
+      }),
     };
-  }, [props.finalTokens, props.pendingTokens, focusedSpeakers, columns]);
+  }, [
+    props.finalTokens,
+    props.pendingTokens,
+    focusedSpeakers,
+    focusedLanguage,
+    multilingual,
+    columns,
+  ]);
 
   const historyTokens = history?.tokens;
   const historyRows = useMemo(() => {
@@ -452,10 +221,16 @@ export function CaptionScreen(props: CaptionScreenProps) {
       finalTokens: historyTokens,
       pendingTokens: [],
       focusedSpeakers,
+      focusedLanguage,
       tailChars: Infinity,
     });
-    return wrapUtterances({ utterances, width: columns, maxLines: Infinity });
-  }, [historyTokens, focusedSpeakers, columns]);
+    return wrapUtterances({
+      utterances,
+      width: columns,
+      maxLines: Infinity,
+      showLanguage: multilingual,
+    });
+  }, [historyTokens, focusedSpeakers, focusedLanguage, multilingual, columns]);
 
   const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
   const historyBoxRef = useRef<DOMElement>(null);
@@ -500,6 +275,14 @@ export function CaptionScreen(props: CaptionScreenProps) {
 
     if (input === "0") {
       setFocusedSpeakers(new Set());
+      setFocusedLanguage(undefined);
+      return;
+    }
+    if (input === "l" && multilingual) {
+      const heard = heardLanguages([props.getHistory(), props.pendingTokens]);
+      const cycle = heard.length > 0 ? heard : props.languages;
+      const index = focusedLanguage === undefined ? -1 : cycle.indexOf(focusedLanguage);
+      setFocusedLanguage(cycle[index + 1]);
       return;
     }
     if (/^[1-9]$/.test(input)) {
@@ -526,8 +309,15 @@ export function CaptionScreen(props: CaptionScreenProps) {
   });
 
   const focusedSpeakerIds = sortSpeakerIds(focusedSpeakers);
-  const focusEmpty = focusedSpeakers.size > 0 && utterances.length === 0 && !props.ended;
-  const heardIds = focusEmpty ? heardSpeakerIds([props.finalTokens, props.pendingTokens]) : [];
+  const focus = [
+    ...focusedSpeakerIds.map((id) => `S${id}`),
+    ...(focusedLanguage !== undefined ? [focusedLanguage] : []),
+  ];
+  const focusEmpty = focus.length > 0 && utterances.length === 0 && !props.ended;
+  const heardIds =
+    focusEmpty && focusedSpeakers.size > 0
+      ? heardSpeakerIds([props.finalTokens, props.pendingTokens])
+      : [];
   const hints =
     history !== null
       ? `History ${top + 1}-${Math.min(top + historyHeight, historyRows.length)}/${historyRows.length}  Up/Down PgUp/PgDn scroll  End live`
@@ -537,7 +327,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
           ? "Up history  ESC quit"
           : confirmingEnd
             ? "Press ESC again to end the session"
-            : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  0 all  Up history  m mic  s settings  ESC end`;
+            : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  ${multilingual ? "l language  " : ""}0 all  Up history  m mic  s settings  ESC end`;
 
   return (
     <Box flexDirection="column" height={rows} justifyContent="flex-end">
@@ -556,6 +346,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
           exitLabel="ESC back"
           onPickMicrophone={props.onSettingsPickMicrophone}
           onPickLanguages={props.onSettingsPickLanguages}
+          onPickTranslation={props.onSettingsPickTranslation}
           onPickRegion={props.onSettingsPickRegion}
           onChangeApiKey={props.onSettingsChangeApiKey}
           onDeleteApiKey={props.onSettingsDeleteApiKey}
@@ -578,7 +369,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
         <Box flexDirection="column" height={CAPTION_LINE_COUNT} justifyContent="flex-end">
           {focusEmpty ? (
             <Text dimColor>
-              {`No speech from ${formatSpeakerIds(focusedSpeakerIds)}${
+              {`No speech from ${focus.join(", ")}${
                 heardIds.length > 0 ? `, heard ${formatSpeakerIds(heardIds)}` : ""
               }. Press 0 to show all`}
             </Text>
@@ -595,7 +386,7 @@ export function CaptionScreen(props: CaptionScreenProps) {
         notice={props.notice}
         device={props.device}
         elapsedSeconds={props.elapsedSeconds}
-        focusedSpeakers={focusedSpeakerIds}
+        focus={focus}
       />
       {!overlayOpen && (
         <Box width="100%">

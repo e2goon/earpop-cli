@@ -58,6 +58,8 @@ class FileJournal implements Journal {
   private closed = false;
 
   private warnedWriteFailure = false;
+  // Translations have no timestamps; they are filed at the end of the speech they follow.
+  private lastSpokenEndMs = 0;
 
   public constructor({
     id,
@@ -85,8 +87,14 @@ class FileJournal implements Journal {
     const fallbackMs = Date.now() - this.startedAtMs;
     let lines = "";
     for (const token of tokens) {
-      const atMs = token.startMs !== undefined ? offsetMs + token.startMs : fallbackMs;
-      const endMs = token.endMs !== undefined ? offsetMs + token.endMs : atMs;
+      let atMs = this.lastSpokenEndMs;
+      let endMs = atMs;
+      if (token.translation !== true) {
+        atMs = token.startMs !== undefined ? offsetMs + token.startMs : fallbackMs;
+        endMs = token.endMs !== undefined ? offsetMs + token.endMs : atMs;
+        this.lastSpokenEndMs = endMs;
+      }
+      // Undefined fields drop out of the JSON, so plain speech lines keep their old shape.
       lines +=
         JSON.stringify({
           kind: "token",
@@ -95,6 +103,8 @@ class FileJournal implements Journal {
           text: token.text,
           speaker: token.speaker,
           language: token.language,
+          translation: token.translation,
+          source_language: token.sourceLanguage,
         }) + "\n";
     }
     this.write(lines);
