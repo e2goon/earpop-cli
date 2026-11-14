@@ -20,12 +20,12 @@ jobs:
       matrix:
         include:
           - package: earpop-capture-darwin-arm64
-            runner: macos-14
+            runner: macos-15
             rust_target: aarch64-apple-darwin
             bin: earpop-capture
             host_triple: true
           - package: earpop-capture-darwin-x64
-            runner: macos-14
+            runner: macos-15
             rust_target: x86_64-apple-darwin
             bin: earpop-capture
             host_triple: false
