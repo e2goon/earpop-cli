@@ -63,7 +63,7 @@ When you quit, earpop prints the transcript path and copies it to the clipboard.
 
 ## Settings
 
-`earpop settings`, or `s` during a session, lets you change the microphone, languages, region, and API key. Microphone and language changes apply right away. Region and key changes apply the next time you run earpop. Each region has its own saved key.
+`earpop settings`, or `s` during a session, lets you change the microphone, languages, translation, region, and API key. Microphone, language, and translation changes apply right away. Region and key changes apply the next time you run earpop. Each region has its own saved key.
 
 `earpop auth clear` deletes the saved key for the current region.
 
