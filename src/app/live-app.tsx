@@ -22,15 +22,26 @@ import { regionLabel, resolveRegion } from "#/lib/region.js";
 import { fitTerms, saveSettings, loadSettings } from "#/lib/settings.js";
 import { STT_MODEL } from "#/lib/soniox.js";
 import { verifyApiKey } from "#/lib/verify-key.js";
-import type { CliSettings, Microphone, SttRegion } from "#/lib/types.js";
+import type { CliSettings, Journal, Microphone, SttRegion } from "#/lib/types.js";
 import { quit } from "#/app/runtime.js";
 import { printSessionEnd } from "#/app/session-end.js";
 import { CaptionScreen, type CaptionOverlay } from "#/screens/caption.js";
 import { KeySetup } from "#/screens/key-setup.js";
+import { LanguageSelect } from "#/components/language-select.js";
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { RegionSelect } from "#/screens/region-select.js";
 
-type LivePhase = "boot" | "region-select" | "key-setup" | "mic-select" | "live" | "ended" | "fatal";
+type LivePhase =
+  | "boot"
+  | "region-select"
+  | "key-setup"
+  | "mic-select"
+  | "language-select"
+  | "live"
+  | "ended"
+  | "fatal";
+
+type LiveStart = { region: SttRegion; apiKey: string; deviceName?: string };
 
 const CLOSED_OVERLAY: CaptionOverlay = { kind: "none" };
 
@@ -61,8 +72,10 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
   const [fatalMessage, setFatalMessage] = useState("Unknown error");
   const [region, setRegion] = useState<SttRegion>("us");
   const [finishing, setFinishing] = useState(false);
+  const [warning, setWarning] = useState<string | undefined>();
 
   const controllerRef = useRef<TranscriptionController | null>(null);
+  const journalRef = useRef<Journal | null>(null);
   // Session options read once at boot; the controller owns them afterwards (see snapshot).
   const languageHintsRef = useRef<SttLanguage[]>([]);
   const termsRef = useRef<string[]>([]);
@@ -71,7 +84,11 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
   const overlayEpochRef = useRef(0);
 
   const finish = () => {
-    quit(journalPath === null ? undefined : () => printSessionEnd(journalPath));
+    quit(
+      journalPath === null
+        ? undefined
+        : () => printSessionEnd({ path: journalPath, writeError: journalRef.current?.writeError }),
+    );
   };
 
   // Ctrl+C, or ESC confirmed on the caption screen, ends the session and keeps the path on screen.
@@ -112,17 +129,22 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
   };
   useInterrupt(requestExit);
 
-  async function startLive({
-    region: liveRegion,
-    apiKey,
-    deviceName,
-  }: {
-    region: SttRegion;
-    apiKey: string;
-    deviceName?: string;
-  }) {
+  // First run: ask which languages people speak before streaming, since the system locale is
+  // often English even for people who talk in another language.
+  const askLanguagesRef = useRef(false);
+  const [suggestedLanguages, setSuggestedLanguages] = useState<SttLanguage[]>([]);
+  const [languageStart, setLanguageStart] = useState<LiveStart | null>(null);
+
+  async function startLive(start: LiveStart) {
+    if (askLanguagesRef.current) {
+      setLanguageStart(start);
+      setPhase("language-select");
+      return;
+    }
+    const { region: liveRegion, apiKey, deviceName } = start;
     try {
-      const journal = openJournal(STT_MODEL);
+      const journal = openJournal({ model: STT_MODEL, onWriteError: setWarning });
+      journalRef.current = journal;
       setJournalPath(journal.path);
 
       const controller = createTranscription({
@@ -171,6 +193,8 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
     setRegion(savedRegion);
     // --lang and --translate apply to this run only; picking them in settings still saves them.
     languageHintsRef.current = props.languages ?? normalizeLanguageHints(settings.languages);
+    askLanguagesRef.current = props.languages === undefined && settings.languages === undefined;
+    setSuggestedLanguages(languageHintsRef.current);
     termsRef.current = fitTerms(settings.terms ?? []);
     translationRef.current = props.translation ?? settings.translation ?? [];
     const apiKey = await loadApiKey(savedRegion);
@@ -276,6 +300,32 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
     );
   }
 
+  if (phase === "language-select" && languageStart !== null) {
+    return (
+      <Box flexDirection="column">
+        <Text>Which languages will people speak?</Text>
+        <LanguageSelect
+          current={suggestedLanguages}
+          help="Pick every language you expect; one language keeps the output in it. Press s during a session to change this."
+          cancelLabel="ESC quit"
+          onCancel={requestExit}
+          onPick={(codes) => {
+            languageHintsRef.current = codes;
+            askLanguagesRef.current = false;
+            setPhase("boot");
+            void saveSettings({ languages: codes })
+              .catch((error: unknown) =>
+                setWarning(
+                  `Could not save languages (${errorMessage(error)}); earpop will ask again next time`,
+                ),
+              )
+              .then(() => startLive(languageStart));
+          }}
+        />
+      </Box>
+    );
+  }
+
   if (phase === "fatal") {
     return <FatalScreen message={fatalMessage} onQuit={requestExit} />;
   }
@@ -294,6 +344,7 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
     <CaptionScreen
       {...snapshot}
       journalPath={journalPath ?? undefined}
+      warning={warning}
       ended={phase === "ended"}
       finishing={finishing}
       overlay={overlay}

@@ -38,6 +38,8 @@ interface CaptionScreenProps {
   overlay: CaptionOverlay;
   getHistory: () => Token[];
   journalPath?: string;
+  /** Shown in red until the session ends, for problems the user must not miss. */
+  warning?: string;
   ended?: boolean;
   finishing?: boolean;
   onTogglePause: () => void;
@@ -55,6 +57,8 @@ interface CaptionScreenProps {
 }
 
 const END_CONFIRM_MS = 2_000;
+// Keeps context while a menu shrinks the caption box to a few rows.
+const MIN_TAIL_CHARS = 1_200;
 const COPY_NOTICE_MS = 2_000;
 // Caption rows kept visible above an open menu, plus its top border and the status line.
 const OVERLAY_RESERVED_ROWS = 5;
@@ -263,8 +267,12 @@ export function CaptionScreen(props: CaptionScreenProps) {
       pendingTokens: props.pendingTokens,
       focusedSpeakers,
       focusedLanguage,
-      // Enough text to fill the box even when every character takes one column.
-      tailChars: captionHeight * columns,
+      // Enough text to fill the box even when every character takes one column; with a filter
+      // on, the matching lines can be far back, so scan the whole snapshot tail.
+      tailChars:
+        focusedSpeakers.size > 0 || focusedLanguage !== undefined
+          ? Infinity
+          : Math.max(MIN_TAIL_CHARS, captionHeight * columns),
     });
     return {
       utterances,
@@ -450,7 +458,8 @@ export function CaptionScreen(props: CaptionScreenProps) {
   }
   const hints = fitHints({ hints: hintList, width: columns });
 
-  const overlayRows = rows - OVERLAY_RESERVED_ROWS - (showPath ? 1 : 0);
+  const overlayRows =
+    rows - OVERLAY_RESERVED_ROWS - (showPath ? 1 : 0) - (props.warning !== undefined ? 1 : 0);
   let overlay: ReactNode = null;
   if (props.overlay.kind === "mic") {
     overlay = (
@@ -531,6 +540,11 @@ export function CaptionScreen(props: CaptionScreenProps) {
         </Box>
       )}
 
+      {props.warning !== undefined && (
+        <Text color="red" wrap="truncate-end">
+          {props.warning}
+        </Text>
+      )}
       {showPath && (
         <Text color="yellow" wrap="truncate-middle">
           {`Transcript: ${shortPath(props.journalPath!)}  (c to copy the path)`}

@@ -64,6 +64,8 @@ export interface Journal {
   session(device: string): number;
   tokens(args: { tokens: Token[]; offsetMs: number }): void;
   close(): void;
+  /** Set after the first failed write; the file is missing lines from then on. */
+  readonly writeError?: string;
 }
 
 export interface CliSettings {

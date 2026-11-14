@@ -1,6 +1,7 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 
+import { errorMessage } from "#/lib/errors.js";
 import { appDataDir } from "#/lib/paths.js";
 import type { Journal, Token } from "#/lib/types.js";
 
@@ -28,7 +29,14 @@ function isoWithOffset(date: Date) {
   );
 }
 
-export function openJournal(model: string) {
+/** `onWriteError` fires once, on the first failed write; later failures stay silent. */
+export function openJournal({
+  model,
+  onWriteError,
+}: {
+  model: string;
+  onWriteError: (message: string) => void;
+}) {
   const now = new Date();
   const startedAtIso = isoWithOffset(now);
   const stamp = startedAtIso.slice(0, 19).replace("T", "_").replaceAll(":", "-");
@@ -42,7 +50,7 @@ export function openJournal(model: string) {
     id = `${stamp}-${now.getTime()}`;
   }
 
-  return new FileJournal({ id, model, startedAtIso });
+  return new FileJournal({ id, model, startedAtIso, onWriteError });
 }
 
 // Sync writes: close() is void and the process may exit immediately, so an async queue can drop the last line.
@@ -57,19 +65,24 @@ class FileJournal implements Journal {
   private handle: number | null = null;
   private closed = false;
 
-  private warnedWriteFailure = false;
+  public writeError?: string;
   // Translations have no timestamps; they are filed at the end of the speech they follow.
   private lastSpokenEndMs = 0;
+
+  private readonly onWriteError: (message: string) => void;
 
   public constructor({
     id,
     model,
     startedAtIso,
+    onWriteError,
   }: {
     id: string;
     model: string;
     startedAtIso: string;
+    onWriteError: (message: string) => void;
   }) {
+    this.onWriteError = onWriteError;
     this.id = id;
     this.path = transcriptPath(id);
     this.model = model;
@@ -140,9 +153,10 @@ class FileJournal implements Journal {
       }
       appendFileSync(this.handle, lines);
     } catch (error) {
-      if (!this.warnedWriteFailure) {
-        this.warnedWriteFailure = true;
-        console.error(`Failed to write meeting transcript: ${String(error)}`);
+      if (this.writeError === undefined) {
+        this.writeError = errorMessage(error);
+        // The live screen owns the terminal, so report through the UI instead of stderr.
+        this.onWriteError(`Transcript is not being saved: ${errorMessage(error)}`);
       }
     }
   }

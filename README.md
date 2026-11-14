@@ -20,9 +20,9 @@ npm only installs the microphone helper for your platform (one of the `earpop-ca
 
 ## Getting started
 
-Run `earpop`. The first time, it asks for your Soniox region and API key, verifies the key with Soniox, and then asks you to pick a microphone. After that it goes straight to captions.
+Run `earpop`. The first time, it asks for your Soniox region and API key, verifies the key with Soniox, then asks you to pick a microphone and the languages people will speak. After that it goes straight to captions. `ESC` goes back from the key screen and quits from the others.
 
-Language hints default to your system language plus English (English only on an English system). Press `s` and choose "Choose languages" to change them; type to search the list. Pick one language to keep the output in that language, or several for a mixed conversation.
+The language list starts from your system language plus English (English only on an English system). Press `s` and choose "Choose languages" to change them; type to search the list. Pick one language to keep the output in that language, or several for a mixed conversation.
 
 To use other languages for a single run without changing your settings, pass `--lang`:
 
@@ -137,6 +137,8 @@ Audio goes to the Soniox endpoint for your region and is never written to disk.
 ## Troubleshooting
 
 If Soniox rejects your key, the region is usually wrong. Run `earpop settings`, change the region, and enter the key again.
+
+If a microphone stops sending audio, earpop reopens it and shows "No audio from the microphone; reopened it". Bluetooth headsets and hearing aids do this once when they switch to their microphone mode. After three tries in a minute it stops streaming and asks you to pick another microphone with `m`.
 
 If you see "Capture helper integrity check failed", the helper doesn't match the released build. Reinstall earpop-cli.
 

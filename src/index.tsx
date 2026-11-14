@@ -1,3 +1,5 @@
+// Must run before anything loads React or Ink.
+import "#/production.js";
 import { parseArgs } from "node:util";
 
 import { runTermsCommand } from "#/app/terms-command.js";

@@ -24,6 +24,11 @@ const BACKOFF_MAX_MS = 30_000;
 const BACKOFF_STABLE_MS = 30_000;
 const NOTICE_MS = 4_000;
 const MIC_LOST = "Press m to choose another microphone";
+// A microphone that stops sending frames (Bluetooth headsets switching profile do this) is
+// reopened; after a few tries in a short window the user is asked to pick another one.
+const STALL_MS = 3_000;
+const STALL_RETRY_WINDOW_MS = 60_000;
+const STALL_MAX_RETRIES = 3;
 
 type LiveState = Exclude<SttState, "stopped">;
 
@@ -100,6 +105,9 @@ export function createTranscription({
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let backoffMs = BACKOFF_INITIAL_MS;
+  let lastFrameAtMs = 0;
+  let reopening = false;
+  let stallRetries: number[] = [];
 
   let lastEmitAt = 0;
   let trailingEmit: ReturnType<typeof setTimeout> | null = null;
@@ -214,7 +222,8 @@ export function createTranscription({
   }
 
   async function connect() {
-    if (stopped || paused || connecting) return;
+    // No microphone, no session: an open stream with nothing to send would only cost money.
+    if (stopped || paused || connecting || capture === null) return;
     connecting = true;
     const generation = ++connectGeneration;
     let offsetMs = 0;
@@ -307,23 +316,60 @@ export function createTranscription({
       ) {
         backoffMs = BACKOFF_INITIAL_MS;
       }
+      if (!reopening && capture !== null && Date.now() - lastFrameAtMs > STALL_MS) {
+        reopening = true;
+        void enqueue(reopenStalledCapture).finally(() => {
+          reopening = false;
+        });
+      }
       emit();
     }, 1_000);
   }
 
-  function openCapture(name: string) {
-    return startCapture({
+  // The microphone is gone: stop streaming to Soniox until the user picks one.
+  function loseMicrophone(message: string) {
+    capture = null;
+    dropSession();
+    state = "error";
+    stateMessage = `${message}. ${MIC_LOST}`;
+    emit(true);
+  }
+
+  async function openCapture(name: string) {
+    const opened = await startCapture({
       device: name,
       onFrame: (frame) => {
+        lastFrameAtMs = Date.now();
         session?.sendAudio(frame);
       },
-      onError: (message) => {
-        capture = null;
-        state = "error";
-        stateMessage = `${message}. ${MIC_LOST}`;
-        emit(true);
-      },
+      onError: loseMicrophone,
     });
+    lastFrameAtMs = Date.now();
+    return opened;
+  }
+
+  async function reopenStalledCapture() {
+    // Queued behind other work: a switched or recovered microphone may be flowing again by now.
+    if (stopped || paused || capture === null || Date.now() - lastFrameAtMs <= STALL_MS) return;
+    const now = Date.now();
+    stallRetries = stallRetries.filter((at) => now - at < STALL_RETRY_WINDOW_MS);
+    await stopCapture();
+    if (stallRetries.length >= STALL_MAX_RETRIES) {
+      loseMicrophone(`No audio from ${device}`);
+      return;
+    }
+    stallRetries.push(now);
+    try {
+      capture = await openCapture(device);
+    } catch (error) {
+      loseMicrophone(errorMessage(error));
+      return;
+    }
+    flash("No audio from the microphone; reopened it");
+    // Soniox timestamps count received audio, so the gap would shift every later timestamp;
+    // a fresh session starts a new offset in the journal.
+    dropSession();
+    void connect();
   }
 
   function releaseSession() {
@@ -344,18 +390,22 @@ export function createTranscription({
   // Session options changed: open a replacement session, keeping the microphone running.
   async function restartSession() {
     if (paused) return;
+    dropSession();
+    emit(true);
+    await connect();
+  }
+
+  // Closes the current session, cancels any pending or in-flight connect, and clears the
+  // provisional captions that belonged to it.
+  function dropSession() {
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    // Drop provisional captions from the previous session.
-    pendingTokens = [];
-    // Invalidate any in-flight connect() before opening a replacement session.
     connectGeneration += 1;
     connecting = false;
     releaseSession();
-    emit(true);
-    await connect();
+    pendingTokens = [];
   }
 
   async function teardownIO() {
@@ -436,10 +486,15 @@ export function createTranscription({
           capture = next;
           device = next.device;
           journal.session(device);
-          if (state === "error") {
-            state = session !== null ? "listening" : "connecting";
+          stallRetries = [];
+          // A failed resume never restarted the clock, which also drives stall detection.
+          if (elapsedTimer === null) startElapsedTimer();
+          if (state === "error" && session !== null) {
+            state = "listening";
             stateMessage = undefined;
           }
+          // The session was closed when the old microphone was lost; connect() sets the state.
+          if (session === null) void connect();
           await saveSettings({ microphone: device });
           flash(`Switched microphone to ${device}`);
         } catch (error) {

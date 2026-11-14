@@ -19,6 +19,8 @@ interface LanguageSelectProps {
   max?: number;
   /** Rows this picker may use; defaults to the terminal height. */
   rows?: number;
+  /** Footer for ESC when nothing is being searched; defaults to "ESC cancel". */
+  cancelLabel?: string;
   onPick: (codes: SttLanguage[]) => void;
   onCancel: () => void;
 }
@@ -84,7 +86,9 @@ export function LanguageSelect(props: LanguageSelectProps) {
           }}
         />
       )}
-      <Text dimColor>{query !== "" ? "ESC clear search" : "ESC cancel"}</Text>
+      <Text dimColor>
+        {query !== "" ? "ESC clear search" : (props.cancelLabel ?? "ESC cancel")}
+      </Text>
     </Box>
   );
 }

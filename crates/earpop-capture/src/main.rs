@@ -123,13 +123,19 @@ fn cmd_list() -> Result<(), String> {
         let Some(name) = listed_name(&device) else {
             continue;
         };
-        if !seen.insert(name.clone()) {
-            continue;
-        }
         let is_default = match (&default_id, device.id().ok()) {
             (Some(default_id), Some(id)) => *default_id == id,
             _ => default_name.as_ref() == Some(&name),
         };
+        if !seen.insert(name.clone()) {
+            // Same name listed twice: keep one entry, but never lose the default mark.
+            if is_default {
+                if let Some(entry) = mics.iter_mut().find(|mic: &&mut MicJson| mic.name == name) {
+                    entry.is_default = true;
+                }
+            }
+            continue;
+        }
         mics.push(MicJson { name, is_default });
     }
 
@@ -186,9 +192,12 @@ fn cmd_capture(wanted: Option<String>) -> Result<(), String> {
 
     let mut stdout = io::stdout().lock();
     let poll = Duration::from_millis(50);
+    let parent = parent_id();
 
     loop {
-        if stop.load(Ordering::Relaxed) {
+        // A killed parent never closes the pipe cleanly; a device that has stopped sending
+        // frames would otherwise keep the microphone open forever.
+        if stop.load(Ordering::Relaxed) || parent_id() != parent {
             break;
         }
         match rx.recv_timeout(poll) {
@@ -208,6 +217,17 @@ fn cmd_capture(wanted: Option<String>) -> Result<(), String> {
 
     drop(stream);
     Ok(())
+}
+
+#[cfg(unix)]
+fn parent_id() -> Option<u32> {
+    Some(std::os::unix::process::parent_id())
+}
+
+// Windows has no cheap parent check; the closed pipe still ends capture there.
+#[cfg(not(unix))]
+fn parent_id() -> Option<u32> {
+    None
 }
 
 fn is_pipe_closed(error: &io::Error) -> bool {

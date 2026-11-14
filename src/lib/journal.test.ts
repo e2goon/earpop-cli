@@ -10,7 +10,7 @@ describe("journal", () => {
   useTempHome();
 
   it("files translations at the end of the speech they follow", async () => {
-    const journal = openJournal("stt-rt-v6");
+    const journal = openJournal({ model: "stt-rt-v6", onWriteError: assert.fail });
     journal.tokens({
       offsetMs: 10_000,
       tokens: [
