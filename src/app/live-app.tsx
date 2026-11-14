@@ -8,7 +8,6 @@ import {
   type TranscriptionController,
   type TranscriptionSnapshot,
 } from "#/lib/transcription.js";
-import { copyWithFallback } from "#/lib/clipboard.js";
 import { deleteApiKey, loadApiKey, saveApiKey } from "#/lib/api-key.js";
 import { errorMessage } from "#/lib/errors.js";
 import { openJournal } from "#/lib/journal.js";
@@ -80,10 +79,6 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
   const sessionEndedRef = useRef(false);
   const exitStartedRef = useRef(false);
 
-  const copyJournalPath = () => {
-    if (journalPath !== null) copyWithFallback(journalPath);
-  };
-
   const closeOverlay = () => {
     overlayEpochRef.current += 1;
     setOverlay(CLOSED_OVERLAY);
@@ -106,7 +101,6 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
     }
 
     sessionEndedRef.current = true;
-    copyJournalPath();
     closeOverlay();
     setPhase("ended");
 
@@ -212,6 +206,7 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
           void saveSettings({ region: next });
           setPhase("key-setup");
         }}
+        onCancel={requestExit}
       />
     );
   }
@@ -222,6 +217,10 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
         error={keyError}
         verifying={verifying}
         regionLabel={regionLabel(region)}
+        onBack={() => {
+          setKeyError(undefined);
+          setPhase("region-select");
+        }}
         onSubmit={(key) => {
           setVerifying(true);
           setKeyError(undefined);
@@ -229,7 +228,7 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
             const result = await verifyApiKey({ key: key.trim(), region });
             if (!result.ok) {
               setKeyError(
-                `${result.message}\nIf the region is wrong, press ESC to quit, then change it with 'earpop settings'.`,
+                `${result.message}\nIf the region is wrong, press ESC to pick another region.`,
               );
               setVerifying(false);
               return;
@@ -254,26 +253,25 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
     return (
       <Box flexDirection="column">
         <Text>Choose a microphone</Text>
-        {micNotice !== undefined ? (
-          <Text color="yellow">{micNotice}</Text>
-        ) : (
-          <MicrophoneSelect
-            microphones={microphones}
-            loading={micsLoading}
-            onPick={(name) => {
-              setPhase("boot");
-              void (async () => {
-                await saveSettings({ microphone: name });
-                const apiKey = await loadApiKey(region);
-                if (apiKey === null) {
-                  setPhase("region-select");
-                  return;
-                }
-                await startLive({ region, apiKey, deviceName: name });
-              })().catch((error: unknown) => failFatal(errorMessage(error)));
-            }}
-          />
-        )}
+        {micNotice !== undefined && <Text color="yellow">{micNotice}</Text>}
+        <MicrophoneSelect
+          microphones={microphones}
+          loading={micsLoading}
+          cancelLabel="ESC quit"
+          onCancel={requestExit}
+          onPick={(name) => {
+            setPhase("boot");
+            void (async () => {
+              await saveSettings({ microphone: name });
+              const apiKey = await loadApiKey(region);
+              if (apiKey === null) {
+                setPhase("region-select");
+                return;
+              }
+              await startLive({ region, apiKey, deviceName: name });
+            })().catch((error: unknown) => failFatal(errorMessage(error)));
+          }}
+        />
       </Box>
     );
   }
@@ -301,8 +299,6 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
       overlay={overlay}
       getHistory={() => controllerRef.current?.getHistory() ?? []}
       onTogglePause={() => {
-        // Pause copies the transcript path to the clipboard on enter.
-        if (snapshot.state !== "paused") copyJournalPath();
         void controllerRef.current?.togglePause();
       }}
       onQuit={requestExit}

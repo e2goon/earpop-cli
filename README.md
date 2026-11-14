@@ -37,25 +37,27 @@ earpop languages        # list supported codes
 [S1] So the plan is to ship the beta on Friday.
 [S2] Does that include the Windows build?
 [S1] Yes, the capture helper is ready for x64.
-● Listening                                                     03:12
-p pause  1-9 speaker  0 all  Up history  m mic  s settings  ESC end
+● Listening                                               en  03:12
+p pause  1-9 speaker  0 all  Up history  c copy path  m mic  s settings  ? keys  ESC end
 ```
 
-Dimmed text is provisional and gets replaced once Soniox finalizes it. A new line starts when the speaker or language changes, at the end of a sentence, or after a pause of more than two seconds. With more than one language selected, each line also shows the detected language, such as `[S1 ja]`. The live view shows the last six lines; press `Up` or scroll the mouse wheel to read earlier captions from this session. Everything also goes into the transcript file.
+Captions fill the terminal, so a taller window shows more of the conversation. Dimmed text is provisional and gets replaced once Soniox finalizes it. A new line starts when the speaker or language changes, at the end of a sentence, or after a pause of more than two seconds. With more than one language selected, each line also shows the detected language, such as `[S1 ja]`. The status line shows the languages in use and any translation. Press `Up` or scroll the mouse wheel to read earlier captions from this session. Everything also goes into the transcript file.
 
 | Key        | Action                                                                                                    |
 | ---------- | --------------------------------------------------------------------------------------------------------- |
-| `p`        | Pause or resume. Pausing also copies the transcript path to the clipboard.                                |
+| `p`        | Pause or resume                                                                                           |
 | `1` to `9` | Show only that speaker. Press more numbers to add speakers, or the same number again to remove one.       |
 | `0`        | Show everyone again                                                                                       |
 | `l`        | With several languages or translation on, show only one language. Press again for the next; `0` shows all |
+| `c`        | Copy the transcript path to the clipboard                                                                 |
 | `m`        | Switch microphone                                                                                         |
 | `s`        | Settings                                                                                                  |
+| `?`        | Show every key                                                                                            |
 | `Up`       | Open the session history. `Up`/`Down` and `PgUp`/`PgDn` scroll, `Home` jumps to the start                 |
-| `End`      | Leave the history and return to live captions (`ESC` does the same while the history is open)             |
+| `End`      | Leave the history and return to live captions (`ESC`, or `Down` at the bottom, does the same)             |
 | `ESC`      | Press twice to end the session, then once more to quit                                                    |
 
-`Ctrl+C` does the same as `ESC`. When you quit, earpop waits for the last captions to be saved; press once more to quit right away.
+`Ctrl+C` does the same as `ESC`. When you quit, earpop waits for the last captions to be saved; press once more to quit right away. Keys also accept Korean jamo typed in Hangul mode (ㅔ for `p`, for example); input methods that hold a letter until the next key pass it on late, so switch to English for instant response. Captions keep running above the microphone and settings menus. On narrow terminals the key line keeps the most important keys; `?` lists them all.
 
 When you quit, earpop prints the transcript path and copies it to the clipboard.
 
@@ -138,7 +140,7 @@ If Soniox rejects your key, the region is usually wrong. Run `earpop settings`, 
 
 If you see "Capture helper integrity check failed", the helper doesn't match the released build. Reinstall earpop-cli.
 
-On Linux, live transcription needs ALSA (`libasound2`) and access to the audio device. Copying to the clipboard uses `wl-copy`, `xclip`, or `xsel`; without any of them earpop falls back to OSC 52, which not every terminal supports.
+On Linux, live transcription needs ALSA (`libasound2`) and access to the audio device. "System default" follows the input chosen in your sound settings, which is the right pick for most setups. Copying to the clipboard uses `wl-copy`, `xclip`, or `xsel`; without any of them earpop falls back to OSC 52, which not every terminal supports.
 
 ## Contributing
 

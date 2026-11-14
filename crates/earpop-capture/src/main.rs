@@ -77,27 +77,59 @@ fn parse_device_flag(args: &mut impl Iterator<Item = String>) -> Result<Option<S
     Ok(device)
 }
 
-fn device_name(device: &cpal::Device) -> Option<String> {
-    device.description().ok().map(|d| d.name().to_string())
+/// ALSA lists its rate converters, mixers, and routing plugins as devices; none of them is a
+/// microphone a person would pick. Keyed by ALSA PCM name (the description's driver).
+const ALSA_PLUGINS: &[&str] = &[
+    "null",
+    "lavrate",
+    "samplerate",
+    "speexrate",
+    "jack",
+    "oss",
+    "speex",
+    "upmix",
+    "vdownmix",
+    "usbstream",
+];
+
+/// The name shown and saved for a device, or `None` for ALSA plugins.
+fn listed_name(device: &cpal::Device) -> Option<String> {
+    let description = device.description().ok()?;
+    if let Some(driver) = description.driver() {
+        // Plugin PCMs may carry arguments after a colon, as in `usbstream:CARD=...`.
+        let pcm = driver.split(':').next().unwrap_or(driver);
+        if ALSA_PLUGINS.contains(&pcm) {
+            return None;
+        }
+        // ALSA's `default` PCM describes itself as an output; it follows the system input setting.
+        if driver == "default" {
+            return Some("System default".into());
+        }
+    }
+    Some(description.name().to_string())
 }
 
 fn cmd_list() -> Result<(), String> {
     let host = cpal::default_host();
-    let default_name = host
-        .default_input_device()
-        .as_ref()
-        .and_then(device_name);
+    // Compare by ID: ALSA names its default device differently when listing it.
+    // Fall back to the name where a backend cannot report IDs.
+    let default = host.default_input_device();
+    let default_id = default.as_ref().and_then(|device| device.id().ok());
+    let default_name = default.as_ref().and_then(listed_name);
 
     let mut seen = HashSet::new();
     let mut mics = Vec::new();
     for device in host.input_devices().map_err(text)? {
-        let Some(name) = device_name(&device) else {
+        let Some(name) = listed_name(&device) else {
             continue;
         };
         if !seen.insert(name.clone()) {
             continue;
         }
-        let is_default = default_name.as_ref() == Some(&name);
+        let is_default = match (&default_id, device.id().ok()) {
+            (Some(default_id), Some(id)) => *default_id == id,
+            _ => default_name.as_ref() == Some(&name),
+        };
         mics.push(MicJson { name, is_default });
     }
 
@@ -109,10 +141,13 @@ fn cmd_list() -> Result<(), String> {
 fn pick_device(wanted: Option<&str>) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
     if let Some(wanted) = wanted {
-        let found = host
-            .input_devices()
-            .map_err(text)?
-            .find(|device| device_name(device).as_deref() == Some(wanted));
+        // Settings saved before "System default" existed hold the raw ALSA description.
+        let found = host.input_devices().map_err(text)?.find(|device| {
+            listed_name(device).as_deref() == Some(wanted)
+                || device
+                    .description()
+                    .is_ok_and(|description| description.name() == wanted)
+        });
         if let Some(device) = found {
             return Ok(device);
         }

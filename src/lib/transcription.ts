@@ -13,7 +13,8 @@ import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
 
-const TAIL_CHARS = 2_000;
+// Live captions fill the terminal; this covers a 200-column, 80-row screen of Latin text.
+const TAIL_CHARS = 16_000;
 
 // Throttle non-token paints (elapsed clock). Token snapshots paint immediately.
 const UI_EMIT_INTERVAL_MS = 150;

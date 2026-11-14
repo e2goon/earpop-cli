@@ -1,5 +1,7 @@
 import { MultiSelect } from "@inkjs/ui";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useWindowSize } from "ink";
+
+import { listHeight, menuGap } from "#/components/list-height.js";
 import { useMemo, useState } from "react";
 
 import {
@@ -15,12 +17,16 @@ interface LanguageSelectProps {
   /** Allows saving with nothing selected. */
   allowEmpty?: boolean;
   max?: number;
+  /** Rows this picker may use; defaults to the terminal height. */
+  rows?: number;
   onPick: (codes: SttLanguage[]) => void;
   onCancel: () => void;
 }
 
 export function LanguageSelect(props: LanguageSelectProps) {
   const [error, setError] = useState<string | undefined>();
+  const windowRows = useWindowSize().rows;
+  const rows = props.rows ?? windowRows;
   const [query, setQuery] = useState("");
   // MultiSelect resets to defaultValue when its options change, so carry the selection across filters.
   const [selected, setSelected] = useState<string[]>(props.current);
@@ -50,7 +56,7 @@ export function LanguageSelect(props: LanguageSelectProps) {
   });
 
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box flexDirection="column" gap={menuGap(rows)}>
       <Text dimColor>
         {`Type to search, Space toggles, Enter saves. ${props.help ?? "A single language uses strict restriction."}`}
       </Text>
@@ -62,7 +68,8 @@ export function LanguageSelect(props: LanguageSelectProps) {
         <MultiSelect
           options={options}
           defaultValue={selected}
-          visibleOptionCount={12}
+          // Settings title, help (up to three lines when wrapped), search, error, and footer.
+          visibleOptionCount={listHeight({ rows, reserved: 8, max: 12 })}
           onChange={setSelected}
           onSubmit={(values) => {
             if (values.length === 0 && props.allowEmpty !== true) {

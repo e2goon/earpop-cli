@@ -1,8 +1,9 @@
 import { ConfirmInput, PasswordInput } from "@inkjs/ui";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useWindowSize } from "ink";
 import { useState } from "react";
 
 import { LanguageSelect } from "#/components/language-select.js";
+import { listHeight, menuGap } from "#/components/list-height.js";
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { Select } from "#/components/select.js";
 import { languageHintLabel, translationLabel, type SttLanguage } from "#/lib/languages.js";
@@ -18,6 +19,8 @@ export interface SettingsScreenProps {
   translation: SttLanguage[];
   hasApiKey: boolean;
   notice?: string;
+  /** Rows the settings may use; defaults to the terminal height. */
+  rows?: number;
   /** Footer hint for ESC on the menu. Default: "ESC exit". */
   exitLabel?: string;
   onPickMicrophone: (name: string) => void;
@@ -41,6 +44,8 @@ type View = "menu" | Exclude<MenuItem, "exit"> | "api-key-delete-confirm";
 
 export function SettingsScreen(props: SettingsScreenProps) {
   const [view, setView] = useState<View>("menu");
+  const windowRows = useWindowSize().rows;
+  const rows = props.rows ?? windowRows;
 
   const options: Array<{ label: string; value: MenuItem }> = [
     { label: "Choose microphone", value: "microphone" },
@@ -60,7 +65,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
   });
 
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box flexDirection="column" gap={menuGap(rows)}>
       <Text>Settings</Text>
 
       {props.notice !== undefined && view === "menu" && <Text color="green">{props.notice}</Text>}
@@ -72,6 +77,8 @@ export function SettingsScreen(props: SettingsScreenProps) {
           <Text dimColor>Translation: {translationLabel(props.translation)}</Text>
           <Select
             options={options}
+            // Title, two status lines, the footer, and a notice take the other rows.
+            visibleOptionCount={listHeight({ rows, reserved: 5, max: options.length })}
             onChange={(value) => {
               const item = value as MenuItem;
               if (item === "exit") props.onExit();
@@ -85,6 +92,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
 
       {view === "microphone" && (
         <MicrophoneSelect
+          rows={rows}
           microphones={props.microphones}
           current={props.currentMicrophone}
           loading={props.microphonesLoading}
@@ -98,6 +106,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
 
       {view === "languages" && (
         <LanguageSelect
+          rows={rows}
           current={props.languages}
           onPick={(codes) => {
             props.onPickLanguages(codes);
@@ -109,6 +118,7 @@ export function SettingsScreen(props: SettingsScreenProps) {
 
       {view === "translation" && (
         <LanguageSelect
+          rows={rows}
           current={props.translation}
           help="Pick one language to translate everything into it, two to translate between them, or none to turn translation off."
           allowEmpty

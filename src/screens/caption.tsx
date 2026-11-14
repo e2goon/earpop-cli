@@ -1,10 +1,11 @@
 import { Spinner } from "@inkjs/ui";
 import { Text, useBoxMetrics, useInput, useWindowSize, Box, type DOMElement } from "ink";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { toLines, wrapUtterances, type Piece } from "#/lib/caption-layout.js";
-import { shortPath } from "#/lib/clipboard.js";
+import { copyInBackground, shortPath } from "#/lib/clipboard.js";
+import { fitHints, latinKey, type KeyHint } from "#/lib/keys.js";
 import type { SttLanguage } from "#/lib/languages.js";
 import type { Microphone, SttRegion, SttState, Token } from "#/lib/types.js";
 import { SettingsScreen, type SettingsScreenProps } from "#/screens/settings.js";
@@ -53,9 +54,24 @@ interface CaptionScreenProps {
   onSettingsDeleteApiKey: () => void;
 }
 
-const CAPTION_LINE_COUNT = 6;
 const END_CONFIRM_MS = 2_000;
-const CAPTION_TAIL_CHARS = 1200;
+const COPY_NOTICE_MS = 2_000;
+// Caption rows kept visible above an open menu, plus its top border and the status line.
+const OVERLAY_RESERVED_ROWS = 5;
+
+const KEY_HELP: Array<[string, string]> = [
+  ["p", "Pause or resume"],
+  ["1-9", "Show only these speakers; press again to remove"],
+  ["l", "Show one language at a time"],
+  ["0", "Show everyone and every language"],
+  ["Up, wheel", "Scroll back; Down at the bottom returns to live"],
+  ["PgUp/PgDn", "Page through history; Home jumps to the start"],
+  ["End", "Back to live captions"],
+  ["c", "Copy the transcript path"],
+  ["m", "Switch microphone"],
+  ["s", "Settings"],
+  ["ESC ESC", "End the session; ESC again quits (Ctrl+C too)"],
+];
 
 function sortSpeakerIds(ids: Iterable<string>) {
   return [...ids].sort((a, b) => Number(a) - Number(b));
@@ -97,29 +113,42 @@ function StatusLine(props: {
   stateMessage?: string;
   notice?: string;
   device: string;
+  session: string;
   elapsedSeconds: number;
   focus: string[];
 }) {
   return (
-    <Box width="100%" justifyContent="space-between" gap={2}>
-      <Box flexShrink={1}>
+    // One row always: long notices truncate instead of pushing the captions up.
+    <Box width="100%" height={1} gap={2} overflow="hidden">
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">
         {/* Error text can be long, so only it may shrink; short labels stay whole. */}
         <Box flexShrink={props.state === "error" ? 1 : 0}>
           <StatusLabel state={props.state} stateMessage={props.stateMessage} />
         </Box>
-        {props.focus.length > 0 && <Text dimColor>{`  focus: ${props.focus.join(", ")}`}</Text>}
-        {props.notice !== undefined && <Text color="yellow">{`  ${props.notice}`}</Text>}
-      </Box>
-      {/* Shrinks far faster than the state side, so a long device name truncates first. */}
-      <Box flexShrink={100} gap={2}>
-        {props.device !== "default" && (
-          <Text dimColor wrap="truncate-middle">
-            {props.device}
-          </Text>
+        {props.focus.length > 0 && (
+          <Text dimColor wrap="truncate-end">{`  focus: ${props.focus.join(", ")}`}</Text>
         )}
-        <Box flexShrink={0}>
-          <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
+        {props.notice !== undefined && (
+          <Text color="yellow" wrap="truncate-end">{`  ${props.notice}`}</Text>
+        )}
+      </Box>
+      {/* Shrinks far faster than the state side: the device name goes first, then languages. */}
+      <Box flexShrink={100} gap={2} overflow="hidden">
+        <Box flexShrink={1}>
+          <Text dimColor wrap="truncate-end">
+            {props.session}
+          </Text>
         </Box>
+        {props.device !== "default" && (
+          <Box flexShrink={100}>
+            <Text dimColor wrap="truncate-middle">
+              {props.device}
+            </Text>
+          </Box>
+        )}
+      </Box>
+      <Box flexShrink={0}>
+        <Text dimColor>{formatElapsed(props.elapsedSeconds)}</Text>
       </Box>
     </Box>
   );
@@ -155,6 +184,30 @@ function StatusLabel(props: { state: SttState; stateMessage?: string }) {
   return <Text dimColor>Stopped</Text>;
 }
 
+function HelpPanel(props: { rows: number }) {
+  const keyWidth = Math.max(...KEY_HELP.map(([key]) => key.length)) + 2;
+  // Short terminals get as many keys as fit, then a pointer to the rest.
+  const fits = props.rows - 1 >= KEY_HELP.length;
+  const shown = fits ? KEY_HELP : KEY_HELP.slice(0, Math.max(1, props.rows - 1));
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      {shown.map(([key, action]) => (
+        <Box key={key}>
+          <Box width={keyWidth} flexShrink={0}>
+            <Text color="cyan">{key}</Text>
+          </Box>
+          <Text wrap="truncate-end">{action}</Text>
+        </Box>
+      ))}
+      <Text dimColor wrap="truncate-end">
+        {fits
+          ? "Any key closes this. Hangul jamo work as the same keys."
+          : "More keys in the README. Any key closes this."}
+      </Text>
+    </Box>
+  );
+}
+
 function CaptionRow(props: { line: Piece[] }) {
   return (
     <Text>
@@ -180,7 +233,11 @@ export function CaptionScreen(props: CaptionScreenProps) {
   const focusedLanguage = multilingual ? languageFocus : undefined;
   // null = live view; otherwise finals frozen on entry, scrolled `offset` rows up from the bottom.
   const [history, setHistory] = useState<{ tokens: Token[]; offset: number } | null>(null);
+  const inHistory = history !== null;
   const [confirmingEnd, setConfirmingEnd] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  // A fresh object per copy, so pressing c again restarts the timer even with the same text.
+  const [copyNotice, setCopyNotice] = useState<{ text: string } | undefined>();
 
   useEffect(() => {
     if (!confirmingEnd) return;
@@ -188,22 +245,38 @@ export function CaptionScreen(props: CaptionScreenProps) {
     return () => clearTimeout(timer);
   }, [confirmingEnd]);
 
+  useEffect(() => {
+    if (copyNotice === undefined) return;
+    const timer = setTimeout(() => setCopyNotice(undefined), COPY_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [copyNotice]);
+
+  const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
+  // Captions take every row the overlay, path line, status, and hints leave free.
+  const captionBoxRef = useRef<DOMElement>(null);
+  const captionBox = useBoxMetrics(captionBoxRef);
+  const captionHeight = captionBox.hasMeasured && captionBox.height > 0 ? captionBox.height : rows;
+
   const { utterances, captionLines } = useMemo(() => {
     const utterances = toLines({
       finalTokens: props.finalTokens,
       pendingTokens: props.pendingTokens,
       focusedSpeakers,
       focusedLanguage,
-      tailChars: CAPTION_TAIL_CHARS,
+      // Enough text to fill the box even when every character takes one column.
+      tailChars: captionHeight * columns,
     });
     return {
       utterances,
-      captionLines: wrapUtterances({
-        utterances,
-        width: columns,
-        maxLines: CAPTION_LINE_COUNT,
-        showLanguage: multilingual,
-      }),
+      // The history view replaces live captions, so skip wrapping lines nobody sees.
+      captionLines: inHistory
+        ? []
+        : wrapUtterances({
+            utterances,
+            width: columns,
+            maxLines: captionHeight,
+            showLanguage: multilingual,
+          }),
     };
   }, [
     props.finalTokens,
@@ -212,6 +285,8 @@ export function CaptionScreen(props: CaptionScreenProps) {
     focusedLanguage,
     multilingual,
     columns,
+    captionHeight,
+    inHistory,
   ]);
 
   const historyTokens = history?.tokens;
@@ -232,17 +307,10 @@ export function CaptionScreen(props: CaptionScreenProps) {
     });
   }, [historyTokens, focusedSpeakers, focusedLanguage, multilingual, columns]);
 
-  const showPath = props.journalPath !== undefined && (props.ended || props.state === "paused");
-  const historyBoxRef = useRef<DOMElement>(null);
-  const historyBox = useBoxMetrics(historyBoxRef);
-  const historyHeight =
-    historyBox.hasMeasured && historyBox.height > 0
-      ? historyBox.height
-      : Math.max(CAPTION_LINE_COUNT, rows - (showPath ? 3 : 2));
-  const maxOffset = Math.max(0, historyRows.length - historyHeight);
+  const maxOffset = Math.max(0, historyRows.length - captionHeight);
   const offset = Math.min(history?.offset ?? 0, maxOffset);
-  const top = Math.max(0, historyRows.length - historyHeight - offset);
-  const page = historyHeight - 1;
+  const top = Math.max(0, historyRows.length - captionHeight - offset);
+  const page = Math.max(1, captionHeight - 1);
 
   const scrollUp = (delta: number) => {
     if (history === null) {
@@ -255,8 +323,26 @@ export function CaptionScreen(props: CaptionScreenProps) {
     setHistory(next < 0 ? null : { ...history, offset: Math.min(next, maxOffset) });
   };
 
-  useInput((input, key) => {
-    if (overlayOpen) return;
+  const copyPath = () => {
+    if (props.journalPath === undefined) return;
+    void copyInBackground(props.journalPath).then((copied) =>
+      setCopyNotice({
+        text: copied
+          ? "Copied the transcript path"
+          : "Sent the transcript path to the terminal clipboard",
+      }),
+    );
+  };
+
+  useInput((rawInput, key) => {
+    // Ctrl+C arrives as "c" with ctrl set; it belongs to the interrupt handler, not to copy.
+    // Alt chords are ignored too, but two quick ESC presses can arrive as one meta+ESC.
+    if (overlayOpen || key.ctrl || (key.meta && !key.escape)) return;
+    if (showHelp) {
+      setShowHelp(false);
+      return;
+    }
+    const input = latinKey(rawInput);
 
     if (key.upArrow) return scrollUp(1);
     if (key.downArrow) return scrollUp(-1);
@@ -265,6 +351,14 @@ export function CaptionScreen(props: CaptionScreenProps) {
     if (key.home) return scrollUp(Infinity);
     if (history !== null && (key.end || key.escape)) {
       setHistory(null);
+      return;
+    }
+    if (input === "?") {
+      setShowHelp(true);
+      return;
+    }
+    if (input === "c") {
+      copyPath();
       return;
     }
 
@@ -318,73 +412,136 @@ export function CaptionScreen(props: CaptionScreenProps) {
     focusEmpty && focusedSpeakers.size > 0
       ? heardSpeakerIds([props.finalTokens, props.pendingTokens])
       : [];
-  const hints =
-    history !== null
-      ? `History ${top + 1}-${Math.min(top + historyHeight, historyRows.length)}/${historyRows.length}  Up/Down PgUp/PgDn scroll  End live`
-      : props.finishing
-        ? "Saving transcript  ESC force quit"
-        : props.ended
-          ? "Up history  ESC quit"
-          : confirmingEnd
-            ? "Press ESC again to end the session"
-            : `p ${props.state === "paused" ? "resume" : "pause"}  1-9 speaker  ${multilingual ? "l language  " : ""}0 all  Up history  m mic  s settings  ESC end`;
+
+  // Narrow terminals drop the least important hints; how to end and get help always stay.
+  let hintList: KeyHint[];
+  if (history !== null) {
+    hintList = [
+      {
+        text: `History ${top + 1}-${Math.min(top + captionHeight, historyRows.length)}/${historyRows.length}`,
+        priority: 3,
+      },
+      { text: "Up/Down PgUp/PgDn scroll", priority: 1 },
+      { text: "End live", priority: 2 },
+    ];
+  } else if (props.finishing) {
+    hintList = [{ text: "Saving transcript  ESC force quit", priority: 1 }];
+  } else if (props.ended) {
+    hintList = [
+      { text: "Up history", priority: 1 },
+      { text: "c copy path", priority: 2 },
+      { text: "ESC quit", priority: 3 },
+    ];
+  } else if (confirmingEnd) {
+    hintList = [{ text: "Press ESC again to end the session", priority: 1 }];
+  } else {
+    hintList = [
+      { text: `p ${props.state === "paused" ? "resume" : "pause"}`, priority: 8 },
+      { text: "1-9 speaker", priority: 3 },
+      ...(multilingual ? [{ text: "l language", priority: 4 }] : []),
+      { text: "0 all", priority: 2 },
+      { text: "Up history", priority: 5 },
+      { text: "c copy path", priority: 1 },
+      { text: "m mic", priority: 6 },
+      { text: "s settings", priority: 7 },
+      { text: "? keys", priority: 9 },
+      { text: "ESC end", priority: 10 },
+    ];
+  }
+  const hints = fitHints({ hints: hintList, width: columns });
+
+  const overlayRows = rows - OVERLAY_RESERVED_ROWS - (showPath ? 1 : 0);
+  let overlay: ReactNode = null;
+  if (props.overlay.kind === "mic") {
+    overlay = (
+      <MicrophoneSelect
+        rows={overlayRows}
+        microphones={props.overlay.microphones}
+        current={props.device}
+        loading={props.overlay.loading}
+        error={props.overlay.error}
+        onPick={props.onPickMicrophone}
+        onCancel={props.onCloseOverlay}
+      />
+    );
+  } else if (props.overlay.kind === "settings") {
+    overlay = (
+      <SettingsScreen
+        {...props.overlay}
+        rows={overlayRows}
+        exitLabel="ESC back"
+        onPickMicrophone={props.onSettingsPickMicrophone}
+        onPickLanguages={props.onSettingsPickLanguages}
+        onPickTranslation={props.onSettingsPickTranslation}
+        onPickRegion={props.onSettingsPickRegion}
+        onChangeApiKey={props.onSettingsChangeApiKey}
+        onDeleteApiKey={props.onSettingsDeleteApiKey}
+        onExit={props.onCloseOverlay}
+      />
+    );
+  } else if (showHelp) {
+    overlay = <HelpPanel rows={overlayRows} />;
+  }
+
+  const spoken = props.languages.join("/");
+  const session =
+    props.translation.length === 1
+      ? `${spoken} to ${props.translation[0]}`
+      : props.translation.length === 2
+        ? `${spoken}, ${props.translation.join("/")} both ways`
+        : spoken;
 
   return (
-    <Box flexDirection="column" height={rows} justifyContent="flex-end">
-      {props.overlay.kind === "mic" ? (
-        <MicrophoneSelect
-          microphones={props.overlay.microphones}
-          current={props.device}
-          loading={props.overlay.loading}
-          error={props.overlay.error}
-          onPick={props.onPickMicrophone}
-          onCancel={props.onCloseOverlay}
-        />
-      ) : props.overlay.kind === "settings" ? (
-        <SettingsScreen
-          {...props.overlay}
-          exitLabel="ESC back"
-          onPickMicrophone={props.onSettingsPickMicrophone}
-          onPickLanguages={props.onSettingsPickLanguages}
-          onPickTranslation={props.onSettingsPickTranslation}
-          onPickRegion={props.onSettingsPickRegion}
-          onChangeApiKey={props.onSettingsChangeApiKey}
-          onDeleteApiKey={props.onSettingsDeleteApiKey}
-          onExit={props.onCloseOverlay}
-        />
-      ) : history !== null ? (
+    <Box flexDirection="column" height={rows}>
+      <Box
+        ref={captionBoxRef}
+        flexDirection="column"
+        flexGrow={1}
+        flexBasis={0}
+        overflow="hidden"
+        justifyContent="flex-end"
+      >
+        {history !== null ? (
+          historyRows
+            .slice(top, top + captionHeight)
+            .map((line, index) => <CaptionRow key={top + index} line={line} />)
+        ) : focusEmpty ? (
+          <Text dimColor>
+            {`No speech from ${focus.join(", ")}${
+              heardIds.length > 0 ? `, heard ${formatSpeakerIds(heardIds)}` : ""
+            }. Press 0 to show all`}
+          </Text>
+        ) : (
+          captionLines.map((line, index) => <CaptionRow key={index} line={line} />)
+        )}
+      </Box>
+
+      {/* Overlays sit under the captions, which keep running in the rows above. */}
+      {overlay !== null && (
         <Box
-          ref={historyBoxRef}
           flexDirection="column"
-          flexGrow={1}
-          flexBasis={0}
-          overflow="hidden"
-          justifyContent="flex-end"
+          flexShrink={0}
+          borderStyle="single"
+          borderDimColor
+          borderLeft={false}
+          borderRight={false}
+          borderBottom={false}
         >
-          {historyRows.slice(top, top + historyHeight).map((line, index) => (
-            <CaptionRow key={top + index} line={line} />
-          ))}
-        </Box>
-      ) : (
-        <Box flexDirection="column" height={CAPTION_LINE_COUNT} justifyContent="flex-end">
-          {focusEmpty ? (
-            <Text dimColor>
-              {`No speech from ${focus.join(", ")}${
-                heardIds.length > 0 ? `, heard ${formatSpeakerIds(heardIds)}` : ""
-              }. Press 0 to show all`}
-            </Text>
-          ) : (
-            captionLines.map((line, index) => <CaptionRow key={index} line={line} />)
-          )}
+          {overlay}
         </Box>
       )}
 
-      {showPath && <Text color="yellow">{shortPath(props.journalPath!)} copied to clipboard</Text>}
+      {showPath && (
+        <Text color="yellow" wrap="truncate-middle">
+          {`Transcript: ${shortPath(props.journalPath!)}  (c to copy the path)`}
+        </Text>
+      )}
       <StatusLine
         state={props.ended ? "stopped" : props.state}
         stateMessage={props.stateMessage}
-        notice={props.notice}
+        notice={copyNotice?.text ?? props.notice}
         device={props.device}
+        session={session}
         elapsedSeconds={props.elapsedSeconds}
         focus={focus}
       />

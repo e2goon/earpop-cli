@@ -4,15 +4,15 @@ import { NO_SPACE_SCRIPT } from "#/lib/languages.js";
 import { PAUSE_BREAK_MS, sentenceMark, startsNewWord } from "#/lib/segments.js";
 import type { Token } from "#/lib/types.js";
 
-/** Fixed palette for speaker tags S1–S9 (Ink named colors). */
+/** Fixed palette for speaker tags S1–S9 (Ink named colors); no white or dark blue, which vanish on light or dark themes. */
 const SPEAKER_COLORS = [
   "cyan",
   "yellow",
   "magenta",
   "green",
-  "blue",
+  "blueBright",
   "red",
-  "white",
+  "magentaBright",
   "cyanBright",
   "yellowBright",
 ] as const;
