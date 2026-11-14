@@ -4,9 +4,10 @@ import { useInterrupt } from "#/hooks/use-interrupt.js";
 import { deleteApiKey, loadApiKey, saveApiKey } from "#/lib/api-key.js";
 import { errorMessage } from "#/lib/errors.js";
 import {
-  DEFAULT_LANGUAGE_HINTS,
+  defaultLanguageHints,
   languageHintLabel,
   normalizeLanguageHints,
+  translationLabel,
   type SttLanguage,
 } from "#/lib/languages.js";
 import { listMicrophones } from "#/lib/microphones.js";
@@ -20,7 +21,8 @@ export function SettingsApp() {
   const [microphones, setMicrophones] = useState<Microphone[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentMicrophone, setCurrentMicrophone] = useState<string | undefined>();
-  const [languages, setLanguages] = useState<SttLanguage[]>([...DEFAULT_LANGUAGE_HINTS]);
+  const [languages, setLanguages] = useState<SttLanguage[]>(defaultLanguageHints);
+  const [translation, setTranslation] = useState<SttLanguage[]>([]);
   const [region, setRegion] = useState<SttRegion | undefined>();
   const [hasApiKey, setHasApiKey] = useState(false);
   const [notice, setNotice] = useState<string | undefined>();
@@ -38,6 +40,7 @@ export function SettingsApp() {
       const [key, found] = await Promise.all([loadApiKey(resolved), microphonesLoad]);
       setCurrentMicrophone(settings.microphone);
       setLanguages(normalizeLanguageHints(settings.languages));
+      setTranslation(settings.translation ?? []);
       setRegion(resolved);
       setHasApiKey(key !== null);
       setMicrophones(found);
@@ -48,39 +51,57 @@ export function SettingsApp() {
     });
   }, []);
 
+  const failWith = (action: string) => (error: unknown) =>
+    setNotice(`Failed to ${action}: ${errorMessage(error)}`);
+
   return (
     <SettingsScreen
       microphones={microphones}
       microphonesLoading={loading}
       currentMicrophone={currentMicrophone}
       languages={languages}
+      translation={translation}
       region={region}
       hasApiKey={hasApiKey}
       notice={notice}
       onPickMicrophone={(name) => {
-        void saveSettings({ microphone: name }).then(() => {
-          setCurrentMicrophone(name);
-          setNotice(`Microphone set to ${name}`);
-        });
+        void saveSettings({ microphone: name })
+          .then(() => {
+            setCurrentMicrophone(name);
+            setNotice(`Microphone set to ${name}`);
+          })
+          .catch(failWith("set microphone"));
       }}
       onPickLanguages={(codes) => {
-        void saveSettings({ languages: codes }).then(() => {
-          setLanguages(codes);
-          setNotice(`Languages set to ${languageHintLabel(codes)}`);
-        });
+        void saveSettings({ languages: codes })
+          .then(() => {
+            setLanguages(codes);
+            setNotice(`Languages set to ${languageHintLabel(codes)}`);
+          })
+          .catch(failWith("set languages"));
+      }}
+      onPickTranslation={(codes) => {
+        void saveSettings({ translation: codes })
+          .then(() => {
+            setTranslation(codes);
+            setNotice(`Translation: ${translationLabel(codes)}`);
+          })
+          .catch(failWith("set translation"));
       }}
       onPickRegion={(next) => {
-        void saveSettings({ region: next }).then(async () => {
-          regionRef.current = next;
-          setRegion(next);
-          const key = await loadApiKey(next);
-          setHasApiKey(key !== null);
-          setNotice(
-            `Region set to ${regionLabel(next)}${
-              key === null ? " (register an API key for this region)" : ""
-            }`,
-          );
-        });
+        void saveSettings({ region: next })
+          .then(async () => {
+            regionRef.current = next;
+            setRegion(next);
+            const key = await loadApiKey(next);
+            setHasApiKey(key !== null);
+            setNotice(
+              `Region set to ${regionLabel(next)}${
+                key === null ? " (register an API key for this region)" : ""
+              }`,
+            );
+          })
+          .catch(failWith("save region"));
       }}
       onChangeApiKey={(key) => {
         void saveApiKey({ key, region: regionRef.current })
@@ -88,15 +109,15 @@ export function SettingsApp() {
             setHasApiKey(true);
             setNotice(`Saved API key for ${regionLabel(regionRef.current)}`);
           })
-          .catch((error: unknown) => {
-            setNotice(`Failed to save API key: ${errorMessage(error)}`);
-          });
+          .catch(failWith("save API key"));
       }}
       onDeleteApiKey={() => {
-        void deleteApiKey(regionRef.current).then(() => {
-          setHasApiKey(false);
-          setNotice(`Deleted API key for ${regionLabel(regionRef.current)}`);
-        });
+        void deleteApiKey(regionRef.current)
+          .then(() => {
+            setHasApiKey(false);
+            setNotice(`Deleted API key for ${regionLabel(regionRef.current)}`);
+          })
+          .catch(failWith("delete API key"));
       }}
       onExit={() => {
         quit();

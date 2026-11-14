@@ -1,18 +1,19 @@
-import { readFile, readdir } from "node:fs/promises";
-import { transcriptPath, transcriptsDir } from "#/lib/journal.js";
-import type { Token } from "#/lib/types.js";
+import { open, readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 
-const PARAGRAPH_GAP_MS = 2_000;
+import { transcriptPath, transcriptsDir } from "#/lib/journal.js";
+import { formatStamp } from "#/lib/transcript-formats.js";
+import type { Token } from "#/lib/types.js";
 
 interface TranscriptSummary {
   id: string;
   startedAt: string;
-  tokenCount: number;
+  duration: string;
 }
 
-type TranscriptToken = Token & { atMs: number };
+export type TranscriptToken = Token & { atMs: number };
 
-interface Transcript {
+export interface Transcript {
   startedAt: string;
   model: string;
   tokens: TranscriptToken[];
@@ -25,6 +26,8 @@ interface ParsedLine {
   text?: unknown;
   speaker?: unknown;
   language?: unknown;
+  translation?: unknown;
+  source_language?: unknown;
   started_at?: unknown;
   model?: unknown;
 }
@@ -57,40 +60,69 @@ async function readLines(id: string) {
     .filter((line): line is ParsedLine => line !== null);
 }
 
-export async function listTranscripts() {
-  const dir = transcriptsDir();
+// Listing reads only the meeting header and the last lines, so long transcripts stay cheap.
+const EDGE_BYTES = 4_096;
+
+async function readEdges(path: string) {
+  const handle = await open(path, "r");
+  try {
+    const { size } = await handle.stat();
+    const head = Buffer.alloc(Math.min(size, EDGE_BYTES));
+    await handle.read(head, 0, head.length, 0);
+    const tailStart = Math.max(0, size - EDGE_BYTES);
+    const tail = Buffer.alloc(size - tailStart);
+    await handle.read(tail, 0, tail.length, tailStart);
+    const tailLines = tail.toString("utf8").split("\n");
+    // The first tail line may start mid-record.
+    if (tailStart > 0) tailLines.shift();
+    return { head: head.toString("utf8").split("\n", 1)[0] ?? "", tailLines };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function transcriptFiles() {
   let names: string[];
   try {
-    names = await readdir(dir);
+    names = await readdir(transcriptsDir());
   } catch {
     return [];
   }
+  return names
+    .filter((name) => name.endsWith(".jsonl"))
+    .map((name) => ({ id: name.slice(0, -".jsonl".length), path: join(transcriptsDir(), name) }));
+}
 
+export async function listTranscripts() {
   const results = await Promise.all(
-    names
-      .filter((name) => name.endsWith(".jsonl"))
-      .map(async (name): Promise<TranscriptSummary | null> => {
-        const id = name.slice(0, -".jsonl".length);
-        try {
-          const lines = await readLines(id);
-          const meeting = lines.find((line) => line.kind === "meeting");
-          return {
-            id,
-            startedAt:
-              typeof meeting?.started_at === "string" ? meeting.started_at : "(no timestamp)",
-            tokenCount: lines.filter((line) => line.kind === "token").length,
-          };
-        } catch {
-          return null;
+    (await transcriptFiles()).map(async ({ id, path }): Promise<TranscriptSummary | null> => {
+      try {
+        const { head, tailLines } = await readEdges(path);
+        const meeting = parseLine(head);
+        let lastAtMs = 0;
+        for (const line of tailLines.map(parseLine)) {
+          if (typeof line?.at_ms === "number") lastAtMs = Math.max(lastAtMs, line.at_ms);
+          if (typeof line?.end_ms === "number") lastAtMs = Math.max(lastAtMs, line.end_ms);
         }
-      }),
+        return {
+          id,
+          startedAt:
+            meeting?.kind === "meeting" && typeof meeting.started_at === "string"
+              ? meeting.started_at
+              : "(no timestamp)",
+          duration: formatStamp(lastAtMs),
+        };
+      } catch {
+        return null;
+      }
+    }),
   );
   const summaries = results.filter((summary) => summary !== null);
   summaries.sort((a, b) => b.id.localeCompare(a.id));
   return summaries;
 }
 
-async function readTranscript(id: string) {
+export async function readTranscript(id: string) {
   assertValidId(id);
   const lines = await readLines(id);
   const meeting = lines.find((line) => line.kind === "meeting");
@@ -103,6 +135,10 @@ async function readTranscript(id: string) {
     if (typeof line.speaker === "string") token.speaker = line.speaker;
     if (typeof line.language === "string") token.language = line.language;
     if (typeof line.end_ms === "number") token.endMs = line.end_ms;
+    if (line.translation === true) {
+      token.translation = true;
+      if (typeof line.source_language === "string") token.sourceLanguage = line.source_language;
+    }
     tokens.push(token);
   }
 
@@ -113,64 +149,13 @@ async function readTranscript(id: string) {
   } satisfies Transcript;
 }
 
-function formatStamp(ms: number) {
-  const totalSeconds = Math.floor(ms / 1000);
-  const ss = String(totalSeconds % 60).padStart(2, "0");
-  const minutesTotal = Math.floor(totalSeconds / 60);
-  if (minutesTotal >= 60) {
-    const hh = Math.floor(minutesTotal / 60);
-    return `${hh}:${String(minutesTotal % 60).padStart(2, "0")}:${ss}`;
-  }
-  return `${String(minutesTotal).padStart(2, "0")}:${ss}`;
-}
-
-export async function exportText(id: string) {
-  const transcript = await readTranscript(id);
-
-  interface Paragraph {
-    startMs: number;
-    lastAtMs: number;
-    speaker?: string;
-    text: string;
-  }
-
-  const paragraphs: Paragraph[] = [];
-  for (const token of transcript.tokens) {
-    const previous = paragraphs.at(-1);
-    if (token.text.trim() === "") {
-      if (previous !== undefined) previous.text += token.text;
-      continue;
-    }
-    if (
-      previous === undefined ||
-      token.speaker !== previous.speaker ||
-      token.atMs - previous.lastAtMs > PARAGRAPH_GAP_MS
-    ) {
-      paragraphs.push({
-        startMs: token.atMs,
-        lastAtMs: token.atMs,
-        speaker: token.speaker,
-        text: token.text,
-      });
-      continue;
-    }
-    previous.text += token.text;
-    previous.lastAtMs = token.atMs;
-  }
-
-  const head: string[] = ["earpop transcript v1", `id: ${id}`];
-  if (transcript.startedAt !== "") {
-    head.push(`started: ${transcript.startedAt}`);
-  }
-  if (transcript.model !== "") {
-    head.push(`model: ${transcript.model}`);
-  }
-  head.push("");
-
-  const body = paragraphs.map((paragraph) => {
-    const speakerTag = paragraph.speaker !== undefined ? `S${paragraph.speaker}` : "S?";
-    return `[${formatStamp(paragraph.startMs)}] ${speakerTag}: ${paragraph.text.trim()}`;
-  });
-
-  return [...head, ...body].join("\n") + "\n";
+/** Resolves `latest` to the newest transcript ID; IDs are start times, so the largest is newest. */
+export async function resolveTranscriptId(id: string) {
+  if (id !== "latest") return id;
+  const newest = (await transcriptFiles())
+    .map((file) => file.id)
+    .sort()
+    .at(-1);
+  if (newest === undefined) throw new Error("No saved transcripts.");
+  return newest;
 }

@@ -8,30 +8,40 @@ import {
   type TranscriptionController,
   type TranscriptionSnapshot,
 } from "#/lib/transcription.js";
-import { copyWithFallback } from "#/lib/clipboard.js";
 import { deleteApiKey, loadApiKey, saveApiKey } from "#/lib/api-key.js";
 import { errorMessage } from "#/lib/errors.js";
 import { openJournal } from "#/lib/journal.js";
 import {
-  DEFAULT_LANGUAGE_HINTS,
   languageHintLabel,
   normalizeLanguageHints,
+  translationLabel,
   type SttLanguage,
 } from "#/lib/languages.js";
 import { listMicrophones } from "#/lib/microphones.js";
 import { regionLabel, resolveRegion } from "#/lib/region.js";
-import { saveSettings, loadSettings } from "#/lib/settings.js";
+import { fitTerms, saveSettings, loadSettings } from "#/lib/settings.js";
 import { STT_MODEL } from "#/lib/soniox.js";
 import { verifyApiKey } from "#/lib/verify-key.js";
-import type { CliSettings, Microphone, SttRegion } from "#/lib/types.js";
+import type { CliSettings, Journal, Microphone, SttRegion } from "#/lib/types.js";
 import { quit } from "#/app/runtime.js";
 import { printSessionEnd } from "#/app/session-end.js";
 import { CaptionScreen, type CaptionOverlay } from "#/screens/caption.js";
 import { KeySetup } from "#/screens/key-setup.js";
+import { LanguageSelect } from "#/components/language-select.js";
 import { MicrophoneSelect } from "#/components/microphone-select.js";
 import { RegionSelect } from "#/screens/region-select.js";
 
-type LivePhase = "boot" | "region-select" | "key-setup" | "mic-select" | "live" | "ended" | "fatal";
+type LivePhase =
+  | "boot"
+  | "region-select"
+  | "key-setup"
+  | "mic-select"
+  | "language-select"
+  | "live"
+  | "ended"
+  | "fatal";
+
+type LiveStart = { region: SttRegion; apiKey: string; deviceName?: string };
 
 const CLOSED_OVERLAY: CaptionOverlay = { kind: "none" };
 
@@ -49,7 +59,7 @@ function FatalScreen(props: { message: string; onQuit: () => void }) {
 
 type SettingsOverlay = Extract<CaptionOverlay, { kind: "settings" }>;
 
-export function LiveApp() {
+export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLanguage[] }) {
   const [phase, setPhase] = useState<LivePhase>("boot");
   const [verifying, setVerifying] = useState(false);
   const [keyError, setKeyError] = useState<string | undefined>();
@@ -62,24 +72,29 @@ export function LiveApp() {
   const [fatalMessage, setFatalMessage] = useState("Unknown error");
   const [region, setRegion] = useState<SttRegion>("us");
   const [finishing, setFinishing] = useState(false);
+  const [warning, setWarning] = useState<string | undefined>();
 
   const controllerRef = useRef<TranscriptionController | null>(null);
-  const languageHintsRef = useRef<SttLanguage[]>([...DEFAULT_LANGUAGE_HINTS]);
+  const journalRef = useRef<Journal | null>(null);
+  // Session options read once at boot; the controller owns them afterwards (see snapshot).
+  const languageHintsRef = useRef<SttLanguage[]>([]);
+  const termsRef = useRef<string[]>([]);
+  const translationRef = useRef<SttLanguage[]>([]);
   // Invalidate in-flight overlay loads when the overlay closes or is replaced.
   const overlayEpochRef = useRef(0);
 
   const finish = () => {
-    quit(journalPath === null ? undefined : () => printSessionEnd(journalPath));
+    quit(
+      journalPath === null
+        ? undefined
+        : () => printSessionEnd({ path: journalPath, writeError: journalRef.current?.writeError }),
+    );
   };
 
   // Ctrl+C, or ESC confirmed on the caption screen, ends the session and keeps the path on screen.
   // The next press exits once the transcript is finalized; one more exits immediately.
   const sessionEndedRef = useRef(false);
   const exitStartedRef = useRef(false);
-
-  const copyJournalPath = () => {
-    if (journalPath !== null) copyWithFallback(journalPath);
-  };
 
   const closeOverlay = () => {
     overlayEpochRef.current += 1;
@@ -103,7 +118,6 @@ export function LiveApp() {
     }
 
     sessionEndedRef.current = true;
-    copyJournalPath();
     closeOverlay();
     setPhase("ended");
 
@@ -115,17 +129,22 @@ export function LiveApp() {
   };
   useInterrupt(requestExit);
 
-  async function startLive({
-    region: liveRegion,
-    apiKey,
-    deviceName,
-  }: {
-    region: SttRegion;
-    apiKey: string;
-    deviceName?: string;
-  }) {
+  // First run: ask which languages people speak before streaming, since the system locale is
+  // often English even for people who talk in another language.
+  const askLanguagesRef = useRef(false);
+  const [suggestedLanguages, setSuggestedLanguages] = useState<SttLanguage[]>([]);
+  const [languageStart, setLanguageStart] = useState<LiveStart | null>(null);
+
+  async function startLive(start: LiveStart) {
+    if (askLanguagesRef.current) {
+      setLanguageStart(start);
+      setPhase("language-select");
+      return;
+    }
+    const { region: liveRegion, apiKey, deviceName } = start;
     try {
-      const journal = openJournal(STT_MODEL);
+      const journal = openJournal({ model: STT_MODEL, onWriteError: setWarning });
+      journalRef.current = journal;
       setJournalPath(journal.path);
 
       const controller = createTranscription({
@@ -135,6 +154,8 @@ export function LiveApp() {
         clientReferenceId: journal.id,
         region: liveRegion,
         languageHints: languageHintsRef.current,
+        terms: termsRef.current,
+        translation: translationRef.current,
         onSnapshot: setSnapshot,
         onFatal: failFatal,
       });
@@ -170,7 +191,12 @@ export function LiveApp() {
   const boot = useEffectEvent(async (settings: CliSettings) => {
     const savedRegion = resolveRegion(settings);
     setRegion(savedRegion);
-    languageHintsRef.current = normalizeLanguageHints(settings.languages);
+    // --lang and --translate apply to this run only; picking them in settings still saves them.
+    languageHintsRef.current = props.languages ?? normalizeLanguageHints(settings.languages);
+    askLanguagesRef.current = props.languages === undefined && settings.languages === undefined;
+    setSuggestedLanguages(languageHintsRef.current);
+    termsRef.current = fitTerms(settings.terms ?? []);
+    translationRef.current = props.translation ?? settings.translation ?? [];
     const apiKey = await loadApiKey(savedRegion);
     if (apiKey === null) {
       setPhase("region-select");
@@ -204,6 +230,7 @@ export function LiveApp() {
           void saveSettings({ region: next });
           setPhase("key-setup");
         }}
+        onCancel={requestExit}
       />
     );
   }
@@ -214,6 +241,10 @@ export function LiveApp() {
         error={keyError}
         verifying={verifying}
         regionLabel={regionLabel(region)}
+        onBack={() => {
+          setKeyError(undefined);
+          setPhase("region-select");
+        }}
         onSubmit={(key) => {
           setVerifying(true);
           setKeyError(undefined);
@@ -221,7 +252,7 @@ export function LiveApp() {
             const result = await verifyApiKey({ key: key.trim(), region });
             if (!result.ok) {
               setKeyError(
-                `${result.message}\nIf the region is wrong, press ESC to quit, then change it with 'earpop settings'.`,
+                `${result.message}\nIf the region is wrong, press ESC to pick another region.`,
               );
               setVerifying(false);
               return;
@@ -246,26 +277,51 @@ export function LiveApp() {
     return (
       <Box flexDirection="column">
         <Text>Choose a microphone</Text>
-        {micNotice !== undefined ? (
-          <Text color="yellow">{micNotice}</Text>
-        ) : (
-          <MicrophoneSelect
-            microphones={microphones}
-            loading={micsLoading}
-            onPick={(name) => {
-              setPhase("boot");
-              void (async () => {
-                await saveSettings({ microphone: name });
-                const apiKey = await loadApiKey(region);
-                if (apiKey === null) {
-                  setPhase("region-select");
-                  return;
-                }
-                await startLive({ region, apiKey, deviceName: name });
-              })().catch((error: unknown) => failFatal(errorMessage(error)));
-            }}
-          />
-        )}
+        {micNotice !== undefined && <Text color="yellow">{micNotice}</Text>}
+        <MicrophoneSelect
+          microphones={microphones}
+          loading={micsLoading}
+          cancelLabel="ESC quit"
+          onCancel={requestExit}
+          onPick={(name) => {
+            setPhase("boot");
+            void (async () => {
+              await saveSettings({ microphone: name });
+              const apiKey = await loadApiKey(region);
+              if (apiKey === null) {
+                setPhase("region-select");
+                return;
+              }
+              await startLive({ region, apiKey, deviceName: name });
+            })().catch((error: unknown) => failFatal(errorMessage(error)));
+          }}
+        />
+      </Box>
+    );
+  }
+
+  if (phase === "language-select" && languageStart !== null) {
+    return (
+      <Box flexDirection="column">
+        <Text>Which languages will people speak?</Text>
+        <LanguageSelect
+          current={suggestedLanguages}
+          help="Pick every language you expect; one language keeps the output in it. Press s during a session to change this."
+          cancelLabel="ESC quit"
+          onCancel={requestExit}
+          onPick={(codes) => {
+            languageHintsRef.current = codes;
+            askLanguagesRef.current = false;
+            setPhase("boot");
+            void saveSettings({ languages: codes })
+              .catch((error: unknown) =>
+                setWarning(
+                  `Could not save languages (${errorMessage(error)}); earpop will ask again next time`,
+                ),
+              )
+              .then(() => startLive(languageStart));
+          }}
+        />
       </Box>
     );
   }
@@ -288,13 +344,12 @@ export function LiveApp() {
     <CaptionScreen
       {...snapshot}
       journalPath={journalPath ?? undefined}
+      warning={warning}
       ended={phase === "ended"}
       finishing={finishing}
       overlay={overlay}
       getHistory={() => controllerRef.current?.getHistory() ?? []}
       onTogglePause={() => {
-        // Pause copies the transcript path to the clipboard on enter.
-        if (snapshot.state !== "paused") copyJournalPath();
         void controllerRef.current?.togglePause();
       }}
       onQuit={requestExit}
@@ -324,7 +379,8 @@ export function LiveApp() {
           microphonesLoading: true,
           currentMicrophone: snapshot.device,
           region,
-          languages: languageHintsRef.current,
+          languages: snapshot.languages,
+          translation: snapshot.translation,
           hasApiKey: true,
         });
         void (async () => {
@@ -339,8 +395,9 @@ export function LiveApp() {
             microphonesLoading: false,
             currentMicrophone: settings.microphone ?? snapshot.device,
             region: resolved,
-            // Live session hints are source of truth while connected.
-            languages: languageHintsRef.current,
+            // The controller owns languages and translation while connected.
+            languages: snapshot.languages,
+            translation: snapshot.translation,
             hasApiKey: key !== null,
           });
         })();
@@ -359,7 +416,6 @@ export function LiveApp() {
           .catch(failSettings("set microphone"));
       }}
       onSettingsPickLanguages={(codes) => {
-        languageHintsRef.current = codes;
         void controllerRef.current
           ?.setLanguageHints(codes)
           .then(() =>
@@ -372,6 +428,22 @@ export function LiveApp() {
             patchSettings({
               languages: codes,
               notice: `Failed to set languages: ${errorMessage(error)}`,
+            }),
+          );
+      }}
+      onSettingsPickTranslation={(codes) => {
+        void controllerRef.current
+          ?.setTranslation(codes)
+          .then(() =>
+            patchSettings({
+              translation: codes,
+              notice: `Translation: ${translationLabel(codes)}`,
+            }),
+          )
+          .catch((error: unknown) =>
+            patchSettings({
+              translation: codes,
+              notice: `Failed to set translation: ${errorMessage(error)}`,
             }),
           );
       }}

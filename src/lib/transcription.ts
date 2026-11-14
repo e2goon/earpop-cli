@@ -1,12 +1,20 @@
 import { startCapture } from "#/lib/audio.js";
 import { errorMessage } from "#/lib/errors.js";
-import { languageHintLabel, normalizeLanguageHints, type SttLanguage } from "#/lib/languages.js";
+import {
+  languageHintLabel,
+  NO_SPACE_SCRIPT,
+  normalizeLanguageHints,
+  normalizeTranslation,
+  translationLabel,
+  type SttLanguage,
+} from "#/lib/languages.js";
 import { createSerialQueue } from "#/lib/serial-queue.js";
 import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
 
-const TAIL_CHARS = 2_000;
+// Live captions fill the terminal; this covers a 200-column, 80-row screen of Latin text.
+const TAIL_CHARS = 16_000;
 
 // Throttle non-token paints (elapsed clock). Token snapshots paint immediately.
 const UI_EMIT_INTERVAL_MS = 150;
@@ -16,8 +24,11 @@ const BACKOFF_MAX_MS = 30_000;
 const BACKOFF_STABLE_MS = 30_000;
 const NOTICE_MS = 4_000;
 const MIC_LOST = "Press m to choose another microphone";
-const NO_SPACE_SCRIPT =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+// A microphone that stops sending frames (Bluetooth headsets switching profile do this) is
+// reopened; after a few tries in a short window the user is asked to pick another one.
+const STALL_MS = 3_000;
+const STALL_RETRY_WINDOW_MS = 60_000;
+const STALL_MAX_RETRIES = 3;
 
 type LiveState = Exclude<SttState, "stopped">;
 
@@ -26,6 +37,8 @@ export interface TranscriptionSnapshot {
   stateMessage?: string;
   notice?: string;
   device: string;
+  languages: SttLanguage[];
+  translation: SttLanguage[];
   finalTokens: Token[];
   pendingTokens: Token[];
   elapsedSeconds: number;
@@ -38,6 +51,8 @@ interface TranscriptionOptions {
   clientReferenceId: string;
   region?: SttRegion;
   languageHints?: SttLanguage[];
+  terms?: string[];
+  translation?: SttLanguage[];
   onSnapshot: (snapshot: TranscriptionSnapshot) => void;
   onFatal: (message: string) => void;
 }
@@ -51,11 +66,14 @@ export function createTranscription({
   clientReferenceId,
   region,
   languageHints: languageHintsOption,
+  terms,
+  translation: translationOption,
   onSnapshot,
   onFatal,
 }: TranscriptionOptions) {
   let device = deviceOption ?? "default";
   let languageHints = normalizeLanguageHints(languageHintsOption);
+  let translation = normalizeTranslation(translationOption);
   let capture: AudioCapture | null = null;
   let session: SttSession | null = null;
 
@@ -69,7 +87,7 @@ export function createTranscription({
   let pausedAtMs = 0;
   let pausedTotalMs = 0;
 
-  // Serialize togglePause/switchMicrophone/setLanguageHints/stop — overlapping ops can open capture atop teardown.
+  // Serialize togglePause/switchMicrophone/setLanguageHints/setTranslation/stop — overlapping ops can open capture atop teardown.
   const enqueue = createSerialQueue();
 
   let state: LiveState = "connecting";
@@ -87,6 +105,9 @@ export function createTranscription({
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let backoffMs = BACKOFF_INITIAL_MS;
+  let lastFrameAtMs = 0;
+  let reopening = false;
+  let stallRetries: number[] = [];
 
   let lastEmitAt = 0;
   let trailingEmit: ReturnType<typeof setTimeout> | null = null;
@@ -98,6 +119,8 @@ export function createTranscription({
       stateMessage,
       notice,
       device,
+      languages: languageHints,
+      translation,
       finalTokens,
       pendingTokens,
       elapsedSeconds:
@@ -199,7 +222,8 @@ export function createTranscription({
   }
 
   async function connect() {
-    if (stopped || paused || connecting) return;
+    // No microphone, no session: an open stream with nothing to send would only cost money.
+    if (stopped || paused || connecting || capture === null) return;
     connecting = true;
     const generation = ++connectGeneration;
     let offsetMs = 0;
@@ -215,6 +239,8 @@ export function createTranscription({
         region,
         languageHints,
         contextText: speechContext,
+        terms,
+        translation,
         onEvent: (event) => {
           if (stopped) return;
           if (event.type === "tokens") {
@@ -223,7 +249,11 @@ export function createTranscription({
               sessionHasFinal = true;
               journal.tokens({ tokens: final, offsetMs });
               addFinals(final);
-              speechContext = appendSttContext({ text: speechContext, tokens: final });
+              // Only speech biases recognition; translated text would skew it toward the target.
+              speechContext = appendSttContext({
+                text: speechContext,
+                tokens: final.filter((token) => token.translation !== true),
+              });
             }
             // A replaced session still delivers its last finals; only the current one owns the provisional line.
             if (generation === connectGeneration) {
@@ -286,23 +316,60 @@ export function createTranscription({
       ) {
         backoffMs = BACKOFF_INITIAL_MS;
       }
+      if (!reopening && capture !== null && Date.now() - lastFrameAtMs > STALL_MS) {
+        reopening = true;
+        void enqueue(reopenStalledCapture).finally(() => {
+          reopening = false;
+        });
+      }
       emit();
     }, 1_000);
   }
 
-  function openCapture(name: string) {
-    return startCapture({
+  // The microphone is gone: stop streaming to Soniox until the user picks one.
+  function loseMicrophone(message: string) {
+    capture = null;
+    dropSession();
+    state = "error";
+    stateMessage = `${message}. ${MIC_LOST}`;
+    emit(true);
+  }
+
+  async function openCapture(name: string) {
+    const opened = await startCapture({
       device: name,
       onFrame: (frame) => {
+        lastFrameAtMs = Date.now();
         session?.sendAudio(frame);
       },
-      onError: (message) => {
-        capture = null;
-        state = "error";
-        stateMessage = `${message}. ${MIC_LOST}`;
-        emit(true);
-      },
+      onError: loseMicrophone,
     });
+    lastFrameAtMs = Date.now();
+    return opened;
+  }
+
+  async function reopenStalledCapture() {
+    // Queued behind other work: a switched or recovered microphone may be flowing again by now.
+    if (stopped || paused || capture === null || Date.now() - lastFrameAtMs <= STALL_MS) return;
+    const now = Date.now();
+    stallRetries = stallRetries.filter((at) => now - at < STALL_RETRY_WINDOW_MS);
+    await stopCapture();
+    if (stallRetries.length >= STALL_MAX_RETRIES) {
+      loseMicrophone(`No audio from ${device}`);
+      return;
+    }
+    stallRetries.push(now);
+    try {
+      capture = await openCapture(device);
+    } catch (error) {
+      loseMicrophone(errorMessage(error));
+      return;
+    }
+    flash("No audio from the microphone; reopened it");
+    // Soniox timestamps count received audio, so the gap would shift every later timestamp;
+    // a fresh session starts a new offset in the journal.
+    dropSession();
+    void connect();
   }
 
   function releaseSession() {
@@ -318,6 +385,27 @@ export function createTranscription({
       await capture?.stop();
     } catch {}
     capture = null;
+  }
+
+  // Session options changed: open a replacement session, keeping the microphone running.
+  async function restartSession() {
+    if (paused) return;
+    dropSession();
+    emit(true);
+    await connect();
+  }
+
+  // Closes the current session, cancels any pending or in-flight connect, and clears the
+  // provisional captions that belonged to it.
+  function dropSession() {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    connectGeneration += 1;
+    connecting = false;
+    releaseSession();
+    pendingTokens = [];
   }
 
   async function teardownIO() {
@@ -398,10 +486,15 @@ export function createTranscription({
           capture = next;
           device = next.device;
           journal.session(device);
-          if (state === "error") {
-            state = session !== null ? "listening" : "connecting";
+          stallRetries = [];
+          // A failed resume never restarted the clock, which also drives stall detection.
+          if (elapsedTimer === null) startElapsedTimer();
+          if (state === "error" && session !== null) {
+            state = "listening";
             stateMessage = undefined;
           }
+          // The session was closed when the old microphone was lost; connect() sets the state.
+          if (session === null) void connect();
           await saveSettings({ microphone: device });
           flash(`Switched microphone to ${device}`);
         } catch (error) {
@@ -415,25 +508,26 @@ export function createTranscription({
       return enqueue(async () => {
         if (stopped) return;
         const next = normalizeLanguageHints(codes);
-        if (sameLanguageHints(languageHints, next)) return;
+        if (sameCodes(languageHints, next)) return;
 
-        languageHints = next;
+        // Save first: a failed save leaves the running session and snapshot unchanged.
         await saveSettings({ languages: next });
+        languageHints = next;
         flash(`Languages set to ${languageHintLabel(next)}`);
-        if (paused) return;
+        await restartSession();
+      });
+    },
 
-        if (reconnectTimer !== null) {
-          clearTimeout(reconnectTimer);
-          reconnectTimer = null;
-        }
-        // Drop provisional captions from the previous language session.
-        pendingTokens = [];
-        // Invalidate any in-flight connect() before opening a replacement session.
-        connectGeneration += 1;
-        connecting = false;
-        releaseSession();
-        emit(true);
-        await connect();
+    setTranslation(codes: SttLanguage[]) {
+      return enqueue(async () => {
+        if (stopped) return;
+        const next = normalizeTranslation(codes);
+        if (sameCodes(translation, next)) return;
+
+        await saveSettings({ translation: next });
+        translation = next;
+        flash(`Translation: ${translationLabel(next)}`);
+        await restartSession();
       });
     },
 
@@ -453,7 +547,7 @@ export function createTranscription({
   };
 }
 
-function sameLanguageHints(a: SttLanguage[], b: SttLanguage[]) {
+function sameCodes(a: SttLanguage[], b: SttLanguage[]) {
   if (a.length !== b.length) return false;
   const other = new Set(b);
   return a.every((code) => other.has(code));

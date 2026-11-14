@@ -8,7 +8,7 @@ const FIRST_FRAME_TIMEOUT_MS = 10_000;
 const TERM_GRACE_MS = 2_000;
 const STDERR_KEEP_CHARS = 4_096;
 
-function micPermissionHint() {
+export function micPermissionHint() {
   if (process.platform === "darwin") {
     return "Allow this terminal app under System Settings > Privacy & Security > Microphone";
   }

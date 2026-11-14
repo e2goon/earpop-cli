@@ -27,6 +27,10 @@
 | `perf`                                      | Performance         |
 | `test` / `build` / `ci` / `chore` / `style` | As named            |
 
+## Checks
+
+`pnpm check`, `pnpm lint`, `pnpm fmt:check`, and `pnpm test` (node:test, `src/**/*.test.ts`) must pass; CI runs them on every push to `main` and every pull request. Tests that touch settings or transcripts use `useTempHome()` so they never read or write the real `~/.earpop`.
+
 ## Pull requests
 
 GitHub (`gh pr` when asked). Title = commit subject. Prefer squash merge.

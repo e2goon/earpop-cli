@@ -23,4 +23,4 @@ Agent workflow for this repo. Details live in linked docs — do not duplicate t
 
 - Import alias `#/*` maps to `src/*` (package.json `imports`; write the `.js` extension).
 - Capture platforms: `src/lib/capture-platforms.json` must stay aligned with `.github/workflows/capture.yml`.
-- Scripts and engines: see root `package.json` (`pnpm capture:*`, `pnpm release`, `pnpm check` / `lint` / `fmt`).
+- Scripts and engines: see root `package.json` (`pnpm capture:*`, `pnpm release`, `pnpm check` / `lint` / `fmt` / `test`).

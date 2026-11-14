@@ -4,7 +4,7 @@ import { languageGeneralContext, normalizeLanguageHints } from "#/lib/languages.
 import { DEFAULT_REGION } from "#/lib/region.js";
 import type { SttEvent, SttOptions, SttRegion, SttSession, Token } from "#/lib/types.js";
 
-export const STT_MODEL = "stt-rt-v5";
+export const STT_MODEL = "stt-rt-v6";
 
 /** Keep a short rolling transcript for Soniox context on reconnect (matches desktop). */
 const STT_CONTEXT_CHARS = 1_500;
@@ -36,6 +36,8 @@ interface ServerToken {
   start_ms?: number;
   end_ms?: number;
   language?: string;
+  translation_status?: string;
+  source_language?: string;
 }
 
 interface ServerResponse {
@@ -51,10 +53,18 @@ function toToken(raw: ServerToken) {
   if (raw.start_ms !== undefined) token.startMs = raw.start_ms;
   if (raw.end_ms !== undefined) token.endMs = raw.end_ms;
   if (raw.language !== undefined) token.language = raw.language;
+  if (raw.translation_status === "translation") {
+    token.translation = true;
+    if (raw.source_language !== undefined) token.sourceLanguage = raw.source_language;
+  }
   return token;
 }
 
 const END_TOKEN_TEXT = "<end>";
+
+// Bad request, key, balance, or permission: reconnecting cannot fix these.
+// 408, 413 (session length cap), 429, and 5xx are worth a reconnect.
+const PERMANENT_ERROR_CODES = new Set([400, 401, 402, 403]);
 
 const REGION_WEBSOCKET_URLS: Record<SttRegion, string> = {
   us: "wss://stt-rt.soniox.com/transcribe-websocket",
@@ -68,13 +78,19 @@ export function startSession({
   languageHints,
   clientReferenceId,
   contextText,
+  terms,
+  translation,
   onEvent,
 }: SttOptions) {
-  const hints = normalizeLanguageHints(languageHints);
+  const twoWay = translation?.length === 2 ? translation : undefined;
+  // Both sides of a two-way translation are spoken, so both belong in the hints.
+  const hints = normalizeLanguageHints([...(languageHints ?? []), ...(twoWay ?? [])]);
   return new Promise<SttSession>((resolve, reject) => {
+    // The start-request api_key field is deprecated; the key travels with the handshake.
     const socket = new WebSocket(REGION_WEBSOCKET_URLS[region ?? DEFAULT_REGION], {
       perMessageDeflate: false,
       handshakeTimeout: CONNECT_TIMEOUT_MS,
+      headers: { Authorization: `Bearer ${apiKey}` },
     });
 
     let settled = false;
@@ -97,21 +113,29 @@ export function startSession({
     socket.on("open", () => {
       // Endpoint off: provisional streams fast; finals come later with better word/diarization accuracy.
       const config = {
-        api_key: apiKey,
         model: STT_MODEL,
         audio_format: "pcm_s16le",
         sample_rate: 16000,
         num_channels: 1,
         language_hints: hints,
         // Strict is strongest with a single language; multiple hints stay a bias only.
-        language_hints_strict: hints.length === 1,
+        language_hints_strict: hints.length === 1 && twoWay === undefined,
         enable_speaker_diarization: true,
+        // Tags each token with its language; captions and exports use it to split mixed speech.
+        enable_language_identification: true,
         enable_endpoint_detection: false,
         context: {
           general: languageGeneralContext(hints),
           text: contextText || undefined,
+          terms: terms !== undefined && terms.length > 0 ? terms : undefined,
         },
         client_reference_id: clientReferenceId,
+        translation:
+          twoWay !== undefined
+            ? { type: "two_way", language_a: twoWay[0], language_b: twoWay[1] }
+            : translation?.length === 1
+              ? { type: "one_way", target_language: translation[0] }
+              : undefined,
       };
       socket.send(JSON.stringify(config));
 
@@ -177,7 +201,7 @@ export function startSession({
           state: "error",
           message:
             response.error_message ?? `Transcription server error (code ${response.error_code})`,
-          retryable: response.error_code !== 401 && response.error_code !== 402,
+          retryable: !PERMANENT_ERROR_CODES.has(response.error_code),
         });
         return;
       }

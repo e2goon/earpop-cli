@@ -10,6 +10,10 @@ export interface Token {
   startMs?: number;
   endMs?: number;
   language?: string;
+  /** Set on translated text; translations carry no timestamps. */
+  translation?: boolean;
+  /** Language the translation was made from. */
+  sourceLanguage?: string;
 }
 
 export type SttState = "connecting" | "listening" | "paused" | "stopped" | "error";
@@ -30,6 +34,10 @@ export interface SttOptions {
   clientReferenceId?: string;
   /** Recent final transcript tail; biases recognition on reconnect. */
   contextText?: string;
+  /** Words and names to spell as listed (Soniox context.terms). */
+  terms?: string[];
+  /** One language: translate everything into it. Two: translate between them. */
+  translation?: SttLanguage[];
   onEvent: (event: SttEvent) => void;
 }
 
@@ -56,10 +64,14 @@ export interface Journal {
   session(device: string): number;
   tokens(args: { tokens: Token[]; offsetMs: number }): void;
   close(): void;
+  /** Set after the first failed write; the file is missing lines from then on. */
+  readonly writeError?: string;
 }
 
 export interface CliSettings {
   microphone?: string;
   region?: SttRegion;
   languages?: SttLanguage[];
+  terms?: string[];
+  translation?: SttLanguage[];
 }
