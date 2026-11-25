@@ -72,13 +72,18 @@ function alignTranslations(blocks: Paragraph[]) {
 function groupTokens({ tokens, cues }: { tokens: TranscriptToken[]; cues: boolean }) {
   const blocks: Paragraph[] = [];
   let lastAtMs = 0;
+  let currentWidth = 0;
   for (const token of tokens) {
     const previous = blocks.at(-1);
     if (token.text.trim() === "") {
-      if (previous !== undefined) previous.text += token.text;
+      if (previous !== undefined) {
+        previous.text += token.text;
+        if (cues) currentWidth += stringWidth(token.text);
+      }
       continue;
     }
     const spoken = token.translation !== true;
+    const tokenWidth = cues ? stringWidth(token.text) : 0;
     if (
       previous === undefined ||
       token.speaker !== previous.speaker ||
@@ -90,7 +95,7 @@ function groupTokens({ tokens, cues }: { tokens: TranscriptToken[]; cues: boolea
       (cues &&
         startsNewWord(token.text) &&
         (sentenceMark(previous.text) !== null ||
-          stringWidth(previous.text.trim()) + stringWidth(token.text) > CUE_MAX_WIDTH ||
+          currentWidth + tokenWidth > CUE_MAX_WIDTH ||
           (spoken && token.atMs - previous.startMs > CUE_MAX_MS)))
     ) {
       blocks.push({
@@ -101,8 +106,10 @@ function groupTokens({ tokens, cues }: { tokens: TranscriptToken[]; cues: boolea
         ...(spoken ? {} : { translation: true }),
         text: token.text,
       });
+      currentWidth = cues ? stringWidth(token.text.trimStart()) : 0;
     } else {
       previous.text += token.text;
+      currentWidth += tokenWidth;
       previous.endMs = Math.max(previous.endMs, token.endMs ?? token.atMs);
     }
     if (spoken) lastAtMs = token.atMs;
@@ -184,6 +191,10 @@ function renderParagraphs({
   return [...head, lines.join("\n\n")].join("\n").trimEnd() + "\n";
 }
 
+function escapeVtt(text: string) {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
 function renderCues({ transcript, vtt }: { transcript: Transcript; vtt: boolean }) {
   const cues = toCues(transcript.tokens);
   const { show } = labelLanguages(cues);
@@ -193,9 +204,10 @@ function renderCues({ transcript, vtt }: { transcript: Transcript; vtt: boolean 
     const label = speakerLabel({ block: cue, showLanguage: show });
     if (!vtt) return [String(index + 1), timing, `${label}: ${cue.text}`, ""].join("\n");
     // `<v>` names the speaker; `<lang>` lets players pick fonts and direction per language.
-    const text = cue.text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-    const spoken = cue.language !== undefined ? `<lang ${cue.language}>${text}</lang>` : text;
-    return [timing, `<v ${label}>${spoken}`, ""].join("\n");
+    const text = escapeVtt(cue.text);
+    const spoken =
+      cue.language !== undefined ? `<lang ${escapeVtt(cue.language)}>${text}</lang>` : text;
+    return [timing, `<v ${escapeVtt(label)}>${spoken}`, ""].join("\n");
   });
   return vtt ? ["WEBVTT", "", ...blocks].join("\n") : blocks.join("\n");
 }

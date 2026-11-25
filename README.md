@@ -38,26 +38,24 @@ earpop languages        # list supported codes
 [S2] Does that include the Windows build?
 [S1] Yes, the capture helper is ready for x64.
 ● Listening                                               en  03:12
-p pause  1-9 speaker  0 all  Up history  c copy path  m mic  s settings  ? keys  ESC end
+p pause  1-9 speaker  0 all  c copy path  m mic  s settings  ? keys  ESC end
 ```
 
-Captions fill the terminal, so a taller window shows more of the conversation. Dimmed text is provisional and gets replaced once Soniox finalizes it. A new line starts when the speaker or language changes, at the end of a sentence, or after a pause of more than two seconds. With more than one language selected, each line also shows the detected language, such as `[S1 ja]`. The status line shows the languages in use and any translation. Press `Up` or scroll the mouse wheel to read earlier captions from this session. Everything also goes into the transcript file.
+Finalized sentences flow into your terminal's normal scrollback buffer, so you can scroll up, select text to copy, or search with your terminal as usual. Dimmed text at the bottom is provisional and gets replaced once Soniox finalizes it. A new line starts when the speaker or language changes, at the end of a sentence, or after a pause of more than two seconds. With more than one language selected, each line also shows the detected language, such as `[S1 ja]`. The status line shows the languages in use and any translation.
 
 | Key        | Action                                                                                                    |
 | ---------- | --------------------------------------------------------------------------------------------------------- |
 | `p`        | Pause or resume                                                                                           |
-| `1` to `9` | Show only that speaker. Press more numbers to add speakers, or the same number again to remove one.       |
-| `0`        | Show everyone again                                                                                       |
-| `l`        | With several languages or translation on, show only one language. Press again for the next; `0` shows all |
+| `1` to `9` | Filter incoming captions to those speakers. Press more numbers to add speakers, or press again to remove. |
+| `0`        | Stop filtering by speaker or language                                                                     |
+| `l`        | With several languages or translation on, filter incoming captions by language. Press again for the next. |
 | `c`        | Copy the transcript path to the clipboard                                                                 |
 | `m`        | Switch microphone                                                                                         |
 | `s`        | Settings                                                                                                  |
 | `?`        | Show every key                                                                                            |
-| `Up`       | Open the session history. `Up`/`Down` and `PgUp`/`PgDn` scroll, `Home` jumps to the start                 |
-| `End`      | Leave the history and return to live captions (`ESC`, or `Down` at the bottom, does the same)             |
 | `ESC`      | Press twice to end the session, then once more to quit                                                    |
 
-`Ctrl+C` does the same as `ESC`. When you quit, earpop waits for the last captions to be saved; press once more to quit right away. Keys also accept Korean jamo typed in Hangul mode (ㅔ for `p`, for example); input methods that hold a letter until the next key pass it on late, so switch to English for instant response. Captions keep running above the microphone and settings menus. On narrow terminals the key line keeps the most important keys; `?` lists them all.
+`Ctrl+C` does the same as `ESC`. When you quit, earpop waits for the last captions to be saved; press once more to quit right away. Keys also accept Korean jamo typed in Hangul mode (ㅔ for `p`, for example); input methods that hold a letter until the next key pass it on late, so switch to English for instant response. Live captions keep running above the microphone and settings menus. On narrow terminals the key line keeps the most important keys; `?` lists them all.
 
 When you quit, earpop prints the transcript path and copies it to the clipboard.
 
@@ -66,6 +64,8 @@ When you quit, earpop prints the transcript path and copies it to the clipboard.
 `earpop settings`, or `s` during a session, lets you change the microphone, languages, translation, region, and API key. Microphone, language, and translation changes apply right away. Region and key changes apply the next time you run earpop. Each region has its own saved key.
 
 `earpop auth clear` deletes the saved key for the current region.
+
+`earpop usage` shows Soniox project usage and cost for the active region (today, this month, and up to 366 days with `--days <n>`, or `--json`).
 
 ### Translation
 

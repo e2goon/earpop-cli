@@ -53,7 +53,7 @@ export async function runTranscriptsCommand(args: string[]) {
       return;
     }
     const outPath = out ?? transcriptPath(id).replace(/\.jsonl$/, `.${format}`);
-    await writeFile(outPath, text);
+    await writeFile(outPath, text, { mode: 0o600 });
     console.log(outPath);
     return;
   }

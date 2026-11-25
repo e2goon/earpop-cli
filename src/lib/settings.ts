@@ -70,7 +70,7 @@ export async function loadSettings() {
 
 async function writeThrough(patch: Partial<CliSettings>) {
   const path = settingsPath();
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 
   const current = await loadSettings();
   const merged = { ...current, ...patch };
@@ -90,7 +90,10 @@ async function writeThrough(patch: Partial<CliSettings>) {
 
   const tempPath = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   try {
-    await writeFile(tempPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+    await writeFile(tempPath, JSON.stringify(merged, null, 2) + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     await rename(tempPath, path);
   } catch (error) {
     await unlink(tempPath).catch(() => {});

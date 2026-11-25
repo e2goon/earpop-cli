@@ -60,6 +60,7 @@ export interface AudioOptions {
 export interface Journal {
   id: string;
   path: string;
+  readonly hasWritten: boolean;
   /** Records the device and returns the session start offset for token timestamps. */
   session(device: string): number;
   tokens(args: { tokens: Token[]; offsetMs: number }): void;

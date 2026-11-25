@@ -1,8 +1,8 @@
 import { Text, Box, useInput } from "ink";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { useAlternateScreen } from "#/hooks/use-alternate-screen.js";
 import { useInterrupt } from "#/hooks/use-interrupt.js";
+import { utteranceMatchesFilter, type CommittedUtterance } from "#/lib/caption-layout.js";
 import {
   createTranscription,
   type TranscriptionController,
@@ -67,6 +67,7 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
   const [micsLoading, setMicsLoading] = useState(true);
   const [micNotice, setMicNotice] = useState<string | undefined>();
   const [snapshot, setSnapshot] = useState<TranscriptionSnapshot | null>(null);
+  const [committed, setCommitted] = useState<CommittedUtterance[]>([]);
   const [overlay, setOverlay] = useState<CaptionOverlay>(CLOSED_OVERLAY);
   const [journalPath, setJournalPath] = useState<string | null>(null);
   const [fatalMessage, setFatalMessage] = useState("Unknown error");
@@ -82,12 +83,20 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
   const translationRef = useRef<SttLanguage[]>([]);
   // Invalidate in-flight overlay loads when the overlay closes or is replaced.
   const overlayEpochRef = useRef(0);
+  const filterRef = useRef<{ speakers: ReadonlySet<string>; language?: string }>({
+    speakers: new Set(),
+  });
 
   const finish = () => {
+    const journal = journalRef.current;
+    const shouldPrint =
+      journalPath !== null &&
+      journal !== null &&
+      (journal.hasWritten || journal.writeError !== undefined);
     quit(
-      journalPath === null
-        ? undefined
-        : () => printSessionEnd({ path: journalPath, writeError: journalRef.current?.writeError }),
+      shouldPrint
+        ? () => printSessionEnd({ path: journalPath, writeError: journal.writeError })
+        : undefined,
     );
   };
 
@@ -113,6 +122,8 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
       setFinishing(true);
       void Promise.resolve(controllerRef.current?.stop())
         .catch(() => {})
+        // Yield one tick so React/Ink flushes any final <Static> commit before unmount.
+        .then(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
         .then(finish);
       return;
     }
@@ -156,6 +167,19 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
         languageHints: languageHintsRef.current,
         terms: termsRef.current,
         translation: translationRef.current,
+        onCommit: (items) => {
+          const { speakers, language } = filterRef.current;
+          const matched = items.filter((utterance) =>
+            utteranceMatchesFilter({
+              utterance,
+              focusedSpeakers: speakers,
+              focusedLanguage: language,
+            }),
+          );
+          if (matched.length > 0) {
+            setCommitted((prev) => [...prev, ...matched]);
+          }
+        },
         onSnapshot: setSnapshot,
         onFatal: failFatal,
       });
@@ -216,8 +240,6 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
       .catch((error: unknown) => failFatal(errorMessage(error)));
   }, []);
 
-  useAlternateScreen(phase === "live" || phase === "ended" || phase === "boot");
-
   if (phase === "boot") {
     return <Text>Preparing</Text>;
   }
@@ -227,7 +249,9 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
       <RegionSelect
         onPick={(next) => {
           setRegion(next);
-          void saveSettings({ region: next });
+          void saveSettings({ region: next }).catch((error: unknown) =>
+            setWarning(`Could not save region: ${errorMessage(error)}`),
+          );
           setPhase("key-setup");
         }}
         onCancel={requestExit}
@@ -249,24 +273,23 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
           setVerifying(true);
           setKeyError(undefined);
           void (async () => {
-            const result = await verifyApiKey({ key: key.trim(), region });
-            if (!result.ok) {
-              setKeyError(
-                `${result.message}\nIf the region is wrong, press ESC to pick another region.`,
-              );
-              setVerifying(false);
-              return;
-            }
             try {
+              const result = await verifyApiKey({ key: key.trim(), region });
+              if (!result.ok) {
+                setKeyError(
+                  `${result.message}\nIf the region is wrong, press ESC to pick another region.`,
+                );
+                setVerifying(false);
+                return;
+              }
               await saveApiKey({ key, region });
+              setVerifying(false);
+              const settings = await loadSettings();
+              await chooseInitialMicrophone(settings.microphone ?? null);
             } catch (error) {
               setKeyError(errorMessage(error));
               setVerifying(false);
-              return;
             }
-            setVerifying(false);
-            const settings = await loadSettings();
-            await chooseInitialMicrophone(settings.microphone ?? null);
           })();
         }}
       />
@@ -348,9 +371,15 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
       ended={phase === "ended"}
       finishing={finishing}
       overlay={overlay}
-      getHistory={() => controllerRef.current?.getHistory() ?? []}
+      committed={committed}
+      onFilterChange={(filter) => {
+        filterRef.current = filter;
+      }}
+      getHeardLanguages={() => controllerRef.current?.getHeardLanguages() ?? []}
       onTogglePause={() => {
-        void controllerRef.current?.togglePause();
+        void controllerRef.current?.togglePause().catch((error: unknown) => {
+          setWarning(`Failed to toggle pause: ${errorMessage(error)}`);
+        });
       }}
       onQuit={requestExit}
       onOpenMicrophones={() => {
@@ -400,11 +429,17 @@ export function LiveApp(props: { languages?: SttLanguage[]; translation?: SttLan
             translation: snapshot.translation,
             hasApiKey: key !== null,
           });
-        })();
+        })().catch((error: unknown) => {
+          if (epoch !== overlayEpochRef.current) return;
+          patchSettings({
+            microphonesLoading: false,
+            notice: `Failed to load settings: ${errorMessage(error)}`,
+          });
+        });
       }}
       onPickMicrophone={(name) => {
         closeOverlay();
-        void controllerRef.current?.switchMicrophone(name);
+        void controllerRef.current?.switchMicrophone(name).catch(() => {});
       }}
       onCloseOverlay={closeOverlay}
       onSettingsPickMicrophone={(name) => {

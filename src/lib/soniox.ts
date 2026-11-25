@@ -2,6 +2,7 @@ import WebSocket from "ws";
 
 import { languageGeneralContext, normalizeLanguageHints } from "#/lib/languages.js";
 import { DEFAULT_REGION } from "#/lib/region.js";
+import { stripTerminalEscapes } from "#/lib/sanitize.js";
 import type { SttEvent, SttOptions, SttRegion, SttSession, Token } from "#/lib/types.js";
 
 export const STT_MODEL = "stt-rt-v6";
@@ -22,11 +23,11 @@ export function appendSttContext({ text, tokens }: { text: string; tokens: Token
     next += token.text;
   }
   if (next.length <= STT_CONTEXT_CHARS) return next;
-  const chars = [...next];
-  if (chars.length > STT_CONTEXT_CHARS) {
-    return chars.slice(-STT_CONTEXT_CHARS).join("");
-  }
-  return next;
+  let start = next.length - STT_CONTEXT_CHARS;
+  const firstCode = next.charCodeAt(start);
+  // Avoid splitting a UTF-16 surrogate pair at the slice boundary.
+  if (firstCode >= 0xdc00 && firstCode <= 0xdfff) start += 1;
+  return next.slice(start);
 }
 
 interface ServerToken {
@@ -48,14 +49,19 @@ interface ServerResponse {
 }
 
 function toToken(raw: ServerToken) {
-  const token: Token = { text: raw.text ?? "", isFinal: raw.is_final === true };
-  if (raw.speaker !== undefined) token.speaker = String(raw.speaker);
+  const token: Token = {
+    text: stripTerminalEscapes(raw.text ?? ""),
+    isFinal: raw.is_final === true,
+  };
+  if (raw.speaker !== undefined) token.speaker = stripTerminalEscapes(String(raw.speaker));
   if (raw.start_ms !== undefined) token.startMs = raw.start_ms;
   if (raw.end_ms !== undefined) token.endMs = raw.end_ms;
-  if (raw.language !== undefined) token.language = raw.language;
+  if (raw.language !== undefined) token.language = stripTerminalEscapes(raw.language);
   if (raw.translation_status === "translation") {
     token.translation = true;
-    if (raw.source_language !== undefined) token.sourceLanguage = raw.source_language;
+    if (raw.source_language !== undefined) {
+      token.sourceLanguage = stripTerminalEscapes(raw.source_language);
+    }
   }
   return token;
 }
@@ -157,7 +163,8 @@ export function startSession({
         async stop() {
           if (finishedSeen || socket.readyState !== WebSocket.OPEN) {
             clearKeepalive();
-            if (socket.readyState !== WebSocket.CLOSED) socket.close();
+            stopped = true;
+            if (socket.readyState === WebSocket.OPEN) socket.close();
             return;
           }
           await new Promise<void>((done) => {
@@ -179,7 +186,7 @@ export function startSession({
           });
           clearKeepalive();
           stopped = true;
-          socket.close();
+          if (socket.readyState === WebSocket.OPEN) socket.close();
         },
       });
     });
@@ -200,7 +207,9 @@ export function startSession({
           type: "state",
           state: "error",
           message:
-            response.error_message ?? `Transcription server error (code ${response.error_code})`,
+            response.error_message !== undefined && response.error_message !== null
+              ? stripTerminalEscapes(response.error_message)
+              : `Transcription server error (code ${response.error_code})`,
           retryable: !PERMANENT_ERROR_CODES.has(response.error_code),
         });
         return;

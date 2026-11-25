@@ -14,7 +14,7 @@ UI (ink)  ←── one snapshot / setState per WS message ──  transcription
 
 - **Hot:** mic, socket, tokens, UI; no blocking.
 - **Cold:** journal, keepalive, settings — never stall hot.
-- **Journal** persists full finals; the controller also keeps them in memory for history scrollback. Live captions lay out only the tail that fits the terminal (cost bounded by screen size, not session length), and history renders only the visible rows.
+- **Journal** persists full finals; closed utterances flush once to Ink `<Static>` (native terminal scrollback) and drop from memory, so only the active open utterance and provisional tokens re-render in the live area.
 - The published bundle runs React and Ink in production mode (`src/production.ts`); `pnpm dev` keeps development builds.
 - Same controller modules power headless `transcripts` commands.
 

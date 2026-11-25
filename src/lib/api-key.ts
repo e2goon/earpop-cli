@@ -80,6 +80,9 @@ export async function saveApiKey({ key, region }: { key: string; region: SttRegi
   if (trimmed === "") {
     throw new Error("Cannot save an empty API key");
   }
+  if (/\s|\p{Cc}/u.test(trimmed)) {
+    throw new Error("API key cannot contain whitespace or control characters");
+  }
 
   if (process.platform === "darwin") {
     await execFileAsync("security", [
@@ -96,7 +99,7 @@ export async function saveApiKey({ key, region }: { key: string; region: SttRegi
   }
 
   const path = credentialsPath(region);
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, trimmed + "\n", { mode: 0o600 });
   await chmod(path, 0o600);
 }

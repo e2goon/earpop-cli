@@ -3,7 +3,12 @@ import { describe, it } from "node:test";
 
 import stringWidth from "string-width";
 
-import { toLines, wrapUtterances } from "#/lib/caption-layout.js";
+import {
+  createUtteranceStream,
+  toLines,
+  utteranceMatchesFilter,
+  wrapUtterances,
+} from "#/lib/caption-layout.js";
 import type { Token } from "#/lib/types.js";
 
 // Soniox sends spacing as a leading space on the next token ("How", " are", " you", "?").
@@ -127,6 +132,48 @@ describe("wrapUtterances", () => {
     const rows = wrap(finals("1", "internationalization"), 12);
     assert.equal(rows[0], "[S1] interna");
     assert.ok(rows.every((row) => stringWidth(row) <= 12));
+  });
+});
+
+describe("createUtteranceStream", () => {
+  it("commits on sentence ends and flushes the trailing utterance", () => {
+    const stream = createUtteranceStream();
+    assert.deepEqual(stream.push(finals("1", "We", " ship", ".")), []);
+    assert.equal(stream.activeTokens().length, 3);
+
+    assert.deepEqual(
+      stream.push(finals("1", " Any", " questions", "?")).map((item) => [item.speaker, item.text]),
+      [
+        ["1", "We ship."],
+        ["1", " Any questions?"],
+      ],
+    );
+    assert.deepEqual(stream.activeTokens(), []);
+
+    assert.deepEqual(stream.push(finals("2", "Pending", " line")), []);
+    assert.deepEqual(
+      stream.flush().map((item) => [item.speaker, item.text]),
+      [["2", "Pending line"]],
+    );
+    assert.deepEqual(stream.flush(), []);
+  });
+
+  it("matches speaker and language filters", () => {
+    assert.equal(
+      utteranceMatchesFilter({
+        utterance: { speaker: "1", language: "en" },
+        focusedSpeakers: new Set(["1"]),
+        focusedLanguage: "en",
+      }),
+      true,
+    );
+    assert.equal(
+      utteranceMatchesFilter({
+        utterance: { speaker: "2", language: "en" },
+        focusedSpeakers: new Set(["1"]),
+      }),
+      false,
+    );
   });
 });
 

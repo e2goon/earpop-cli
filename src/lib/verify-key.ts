@@ -10,16 +10,15 @@ export function verifyApiKey({ key, region }: { key: string; region: SttRegion }
   return new Promise<KeyVerification>((resolve) => {
     let session: SttSession | null = null;
     let settled = false;
+    let grace: ReturnType<typeof setTimeout> | null = null;
 
     const settle = (result: KeyVerification) => {
       if (settled) return;
       settled = true;
-      clearTimeout(grace);
+      if (grace !== null) clearTimeout(grace);
       void session?.stop().catch(() => {});
       resolve(result);
     };
-
-    const grace = setTimeout(() => settle({ ok: true }), VERIFY_GRACE_MS);
 
     startSession({
       apiKey: key,
@@ -37,7 +36,12 @@ export function verifyApiKey({ key, region }: { key: string; region: SttRegion }
     })
       .then((opened) => {
         session = opened;
-        if (settled) void opened.stop().catch(() => {});
+        if (settled) {
+          void opened.stop().catch(() => {});
+          return;
+        }
+        // Start the acceptance timer only after the handshake completes so slow networks cannot skip auth errors.
+        grace = setTimeout(() => settle({ ok: true }), VERIFY_GRACE_MS);
       })
       .catch((error: unknown) => {
         settle({ ok: false, message: errorMessage(error) });

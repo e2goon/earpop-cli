@@ -1,4 +1,5 @@
 import { startCapture } from "#/lib/audio.js";
+import { createUtteranceStream, type CommittedUtterance } from "#/lib/caption-layout.js";
 import { errorMessage } from "#/lib/errors.js";
 import {
   languageHintLabel,
@@ -12,9 +13,6 @@ import { createSerialQueue } from "#/lib/serial-queue.js";
 import { saveSettings } from "#/lib/settings.js";
 import { appendSttContext, startSession } from "#/lib/soniox.js";
 import type { AudioCapture, Journal, SttRegion, SttSession, SttState, Token } from "#/lib/types.js";
-
-// Live captions fill the terminal; this covers a 200-column, 80-row screen of Latin text.
-const TAIL_CHARS = 16_000;
 
 // Throttle non-token paints (elapsed clock). Token snapshots paint immediately.
 const UI_EMIT_INTERVAL_MS = 150;
@@ -53,6 +51,7 @@ interface TranscriptionOptions {
   languageHints?: SttLanguage[];
   terms?: string[];
   translation?: SttLanguage[];
+  onCommit?: (utterances: CommittedUtterance[]) => void;
   onSnapshot: (snapshot: TranscriptionSnapshot) => void;
   onFatal: (message: string) => void;
 }
@@ -68,6 +67,7 @@ export function createTranscription({
   languageHints: languageHintsOption,
   terms,
   translation: translationOption,
+  onCommit,
   onSnapshot,
   onFatal,
 }: TranscriptionOptions) {
@@ -94,9 +94,9 @@ export function createTranscription({
   let stateMessage: string | undefined;
   let notice: string | undefined;
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-  const history: Token[] = [];
-  let tailStart = 0;
-  let tailChars = 0;
+  const utteranceStream = createUtteranceStream();
+  const heardLanguagesSet = new Set<string>();
+  let lastFinalText = "";
   let finalTokens: Token[] = [];
   let pendingTokens: Token[] = [];
   let speechContext = "";
@@ -167,12 +167,11 @@ export function createTranscription({
   // A new session starts mid-conversation; keep a space after the previous session's last word
   // unless either side is a script written without spaces.
   function spaceAfterPrevious(tokens: Token[]) {
-    const previous = history.at(-1);
     const first = tokens[0];
-    if (previous === undefined || first === undefined) return tokens;
-    if (/\s$/.test(previous.text) || /^\s/.test(first.text)) return tokens;
+    if (lastFinalText === "" || first === undefined) return tokens;
+    if (/\s$/.test(lastFinalText) || /^\s/.test(first.text)) return tokens;
     if (
-      NO_SPACE_SCRIPT.test(previous.text.slice(-1)) ||
+      NO_SPACE_SCRIPT.test(lastFinalText.slice(-1)) ||
       NO_SPACE_SCRIPT.test(first.text.charAt(0))
     ) {
       return tokens;
@@ -181,13 +180,22 @@ export function createTranscription({
   }
 
   function addFinals(tokens: Token[]) {
-    history.push(...tokens);
-    for (const token of tokens) tailChars += token.text.length;
-    while (tailChars > TAIL_CHARS && history.length - tailStart > 1) {
-      tailChars -= history[tailStart]!.text.length;
-      tailStart += 1;
+    for (const token of tokens) {
+      if (token.language !== undefined && token.text.trim() !== "") {
+        heardLanguagesSet.add(token.language);
+      }
     }
-    finalTokens = history.slice(tailStart);
+    const last = tokens.at(-1);
+    if (last !== undefined) lastFinalText = last.text;
+    const committed = utteranceStream.push(tokens);
+    finalTokens = utteranceStream.activeTokens();
+    if (committed.length > 0) onCommit?.(committed);
+  }
+
+  function flushActiveUtterance() {
+    const committed = utteranceStream.flush();
+    finalTokens = [];
+    if (committed.length > 0) onCommit?.(committed);
   }
 
   function clearTimers() {
@@ -244,6 +252,13 @@ export function createTranscription({
         onEvent: (event) => {
           if (stopped) return;
           if (event.type === "tokens") {
+            if (
+              event.final.length === 0 &&
+              event.pending.length === 0 &&
+              pendingTokens.length === 0
+            ) {
+              return;
+            }
             if (event.final.length > 0) {
               const final = sessionHasFinal ? event.final : spaceAfterPrevious(event.final);
               sessionHasFinal = true;
@@ -280,9 +295,14 @@ export function createTranscription({
               if (event.retryable === true) {
                 scheduleReconnect(event.message ?? "Connection error");
               } else {
+                dropSession();
+                clearTimers();
+                if (noticeTimer !== null) {
+                  clearTimeout(noticeTimer);
+                  noticeTimer = null;
+                }
                 state = "error";
                 stateMessage = event.message;
-                clearTimers();
                 void teardownIO();
                 onFatal(event.message ?? "Cannot continue transcription");
               }
@@ -336,16 +356,27 @@ export function createTranscription({
   }
 
   async function openCapture(name: string) {
+    const owned = { active: true };
     const opened = await startCapture({
       device: name,
       onFrame: (frame) => {
+        if (!owned.active || stopped) return;
         lastFrameAtMs = Date.now();
         session?.sendAudio(frame);
       },
-      onError: loseMicrophone,
+      onError: (message) => {
+        if (!owned.active || stopped) return;
+        loseMicrophone(message);
+      },
     });
     lastFrameAtMs = Date.now();
-    return opened;
+    return {
+      device: opened.device,
+      stop: async () => {
+        owned.active = false;
+        await opened.stop();
+      },
+    };
   }
 
   async function reopenStalledCapture() {
@@ -415,8 +446,8 @@ export function createTranscription({
   }
 
   return {
-    getHistory() {
-      return history;
+    getHeardLanguages() {
+      return [...heardLanguagesSet];
     },
 
     start() {
@@ -438,14 +469,25 @@ export function createTranscription({
 
         if (!paused) {
           paused = true;
-          connectGeneration += 1;
           pausedAtMs = Date.now();
           state = "paused";
-          pendingTokens = [];
           clearTimers();
+          dropSession();
           emit(true);
-          releaseSession();
           await stopCapture();
+          if (closingSessions.size === 0) {
+            if (paused && !stopped) {
+              flushActiveUtterance();
+              emit(true);
+            }
+          } else {
+            void Promise.all(closingSessions).then(() => {
+              if (paused && !stopped) {
+                flushActiveUtterance();
+                emit(true);
+              }
+            });
+          }
           return;
         }
 
@@ -473,9 +515,14 @@ export function createTranscription({
         if (stopped || (name === device && (paused || capture !== null))) return;
 
         if (paused) {
-          device = name;
-          await saveSettings({ microphone: name });
-          flash(`Switched microphone to ${name}`);
+          try {
+            await saveSettings({ microphone: name });
+            device = name;
+            flash(`Switched microphone to ${name}`);
+          } catch (error) {
+            flash(`Failed to switch microphone: ${errorMessage(error)}`);
+            throw error;
+          }
           return;
         }
 
@@ -500,6 +547,7 @@ export function createTranscription({
         } catch (error) {
           const kept = capture !== null ? " (keeping the previous microphone)" : "";
           flash(`Failed to switch microphone: ${errorMessage(error)}${kept}`);
+          throw error;
         }
       });
     },
@@ -539,6 +587,8 @@ export function createTranscription({
 
         // Not stopped yet: closing sessions still deliver their last finals, which must reach the journal.
         await teardownIO();
+        flushActiveUtterance();
+        emit(true);
         stopped = true;
         if (noticeTimer !== null) clearTimeout(noticeTimer);
         journal.close();

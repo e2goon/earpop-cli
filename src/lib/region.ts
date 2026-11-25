@@ -14,6 +14,12 @@ export function isRegion(value: unknown): value is SttRegion {
   return REGIONS.some((region) => region.code === value);
 }
 
+export const REGION_API_URLS: Record<SttRegion, string> = {
+  us: "https://api.soniox.com",
+  eu: "https://api.eu.soniox.com",
+  jp: "https://api.jp.soniox.com",
+};
+
 export function regionLabel(value: SttRegion) {
   return REGIONS.find((region) => region.code === value)!.label;
 }

@@ -239,10 +239,11 @@ fn is_pipe_closed(error: &io::Error) -> bool {
 }
 
 fn write_pcm(out: &mut impl Write, frame: &[i16]) -> io::Result<()> {
+    let mut bytes = Vec::with_capacity(frame.len() * 2);
     for &sample in frame {
-        out.write_all(&sample.to_le_bytes())?;
+        bytes.extend_from_slice(&sample.to_le_bytes());
     }
-    Ok(())
+    out.write_all(&bytes)
 }
 
 fn build<T>(
@@ -266,7 +267,7 @@ where
             },
             move |error| {
                 let message = format!("Capture stream error: {error}");
-                let _ = errors.send(Event::Error(message));
+                let _ = errors.try_send(Event::Error(message));
             },
             None,
         )

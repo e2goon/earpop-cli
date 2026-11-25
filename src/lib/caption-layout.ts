@@ -35,6 +35,51 @@ export interface Piece {
   tag?: boolean;
 }
 
+export interface CommittedUtterance {
+  id: number;
+  speaker?: string;
+  language?: string;
+  translation?: boolean;
+  text: string;
+}
+
+interface WrappedRow {
+  pieces: Piece[];
+  tag?: Piece;
+}
+
+const MAX_WIDTH_CACHE = 2_048;
+const MAX_CACHED_TEXT_LENGTH = 32;
+
+const widthCache = new Map<string, number>();
+
+function measureWidth(text: string) {
+  let ascii = true;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) {
+      ascii = false;
+      break;
+    }
+  }
+  if (ascii) return text.length;
+
+  if (text.length <= MAX_CACHED_TEXT_LENGTH) {
+    const cached = widthCache.get(text);
+    if (cached !== undefined) return cached;
+  }
+
+  const width = stringWidth(text);
+  if (text.length <= MAX_CACHED_TEXT_LENGTH) {
+    if (widthCache.size >= MAX_WIDTH_CACHE) {
+      const oldest = widthCache.keys().next().value;
+      if (oldest !== undefined) widthCache.delete(oldest);
+    }
+    widthCache.set(text, width);
+  }
+  return width;
+}
+
 function speakerColor(speaker: string) {
   const index = Number(speaker);
   if (!Number.isInteger(index) || index < 1 || index > 9) return undefined;
@@ -70,6 +115,151 @@ function breakUnits(text: string) {
     }
   }
   return units;
+}
+
+function shouldBreakUtterance({
+  token,
+  closed,
+  afterPeriod,
+  lastEndMs,
+  speaker,
+  language,
+  translation,
+  hasText,
+}: {
+  token: Token;
+  closed: boolean;
+  afterPeriod: boolean;
+  lastEndMs: number | undefined;
+  speaker: string | undefined;
+  language: string | undefined;
+  translation: boolean;
+  hasText: boolean;
+}) {
+  const blank = token.text.trim() === "";
+  const paused =
+    token.startMs !== undefined &&
+    lastEndMs !== undefined &&
+    token.startMs - lastEndMs > PAUSE_BREAK_MS;
+  return (
+    closed ||
+    paused ||
+    (afterPeriod && startsNewWord(token.text)) ||
+    (token.speaker !== undefined && token.speaker !== speaker) ||
+    // Translations arrive right after the speech they translate; give them their own line.
+    (!blank && hasText && (token.translation === true) !== translation) ||
+    // Soniox keeps a sentence in one language, so a language switch starts a new line.
+    (!blank &&
+      language !== undefined &&
+      token.language !== undefined &&
+      token.language !== language)
+  );
+}
+
+export function utteranceMatchesFilter({
+  utterance,
+  focusedSpeakers,
+  focusedLanguage,
+}: {
+  utterance: Pick<CommittedUtterance, "speaker" | "language">;
+  focusedSpeakers: ReadonlySet<string>;
+  focusedLanguage?: string;
+}) {
+  if (
+    focusedSpeakers.size > 0 &&
+    (utterance.speaker === undefined || !focusedSpeakers.has(utterance.speaker))
+  ) {
+    return false;
+  }
+  if (focusedLanguage !== undefined && utterance.language !== focusedLanguage) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Incrementally groups finalized tokens into closed utterances for scrollback printing while
+ * exposing only the still-open utterance for live rendering.
+ */
+export function createUtteranceStream() {
+  let nextId = 1;
+  let active: Token[] = [];
+  let speaker: string | undefined;
+  let language: string | undefined;
+  let translation = false;
+  let stable = "";
+  let closed = false;
+  let afterPeriod = false;
+  let lastEndMs: number | undefined;
+
+  const commit = () => {
+    const committed: CommittedUtterance | null =
+      stable.trim() === ""
+        ? null
+        : {
+            id: nextId++,
+            speaker,
+            language,
+            ...(translation ? { translation: true } : {}),
+            text: stable,
+          };
+    active = [];
+    language = undefined;
+    stable = "";
+    closed = false;
+    afterPeriod = false;
+    return committed;
+  };
+
+  return {
+    push(tokens: Token[]) {
+      const committed: CommittedUtterance[] = [];
+      for (const token of tokens) {
+        const blank = token.text.trim() === "";
+        const translated = token.translation === true;
+        if (
+          shouldBreakUtterance({
+            token,
+            closed,
+            afterPeriod,
+            lastEndMs,
+            speaker,
+            language,
+            translation,
+            hasText: stable !== "",
+          })
+        ) {
+          const item = commit();
+          if (item !== null) committed.push(item);
+        }
+        if (token.speaker !== undefined) speaker = token.speaker;
+        if (!blank && language === undefined) language = token.language;
+        if (!blank) translation = translated;
+        active.push(token);
+        stable += token.text;
+        if (token.endMs !== undefined) lastEndMs = token.endMs;
+        if (!blank) {
+          const mark = sentenceMark(token.text);
+          closed = mark === "end";
+          afterPeriod = mark === "period";
+          if (closed) {
+            const item = commit();
+            if (item !== null) committed.push(item);
+          }
+        }
+      }
+      return committed;
+    },
+
+    activeTokens() {
+      return active.slice();
+    },
+
+    flush() {
+      const item = commit();
+      return item === null ? [] : [item];
+    },
+  };
 }
 
 export function toLines({
@@ -112,36 +302,26 @@ export function toLines({
   };
 
   const eat = ({ token, pending }: { token: Token; pending: boolean }) => {
-    if (
-      focusedSpeakers.size > 0 &&
-      (token.speaker === undefined || !focusedSpeakers.has(token.speaker))
-    ) {
+    if (!utteranceMatchesFilter({ utterance: token, focusedSpeakers, focusedLanguage })) {
       return;
     }
-    if (focusedLanguage !== undefined && token.language !== focusedLanguage) return;
     const blank = token.text.trim() === "";
-    const next = token.speaker;
     const translated = token.translation === true;
-    const paused =
-      token.startMs !== undefined &&
-      lastEndMs !== undefined &&
-      token.startMs - lastEndMs > PAUSE_BREAK_MS;
     if (
-      closed ||
-      paused ||
-      (afterPeriod && startsNewWord(token.text)) ||
-      (next !== undefined && next !== speaker) ||
-      // Translations arrive right after the speech they translate; give them their own line.
-      (!blank && (stable !== "" || tail !== "") && translated !== translation) ||
-      // Soniox keeps a sentence in one language, so a language switch starts a new line.
-      (!blank &&
-        language !== undefined &&
-        token.language !== undefined &&
-        token.language !== language)
+      shouldBreakUtterance({
+        token,
+        closed,
+        afterPeriod,
+        lastEndMs,
+        speaker,
+        language,
+        translation,
+        hasText: stable !== "" || tail !== "",
+      })
     ) {
       push();
     }
-    if (next !== undefined) speaker = next;
+    if (token.speaker !== undefined) speaker = token.speaker;
     if (!blank && language === undefined) language = token.language;
     if (!blank) translation = translated;
     if (pending) tail += token.text;
@@ -214,7 +394,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
 
   for (const piece of pieces) {
     if (piece.tag === true) {
-      appendPiece({ piece, pieceWidth: stringWidth(piece.text) });
+      appendPiece({ piece, pieceWidth: measureWidth(piece.text) });
       continue;
     }
 
@@ -222,7 +402,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
       const blank = /^\s+$/.test(unit);
       if (blank && atLineStart()) continue;
 
-      const unitWidth = stringWidth(unit);
+      const unitWidth = measureWidth(unit);
       // Never leave a speaker tag or indent alone on a row: a unit that cannot fit even there is split.
       if (lineWidth + unitWidth > width && !atLineStart()) {
         newLine(true);
@@ -236,7 +416,7 @@ function wrapFlow({ pieces, width, indent }: { pieces: Piece[]; width: number; i
       let chunk = "";
       let chunkWidth = 0;
       for (const char of graphemes(unit)) {
-        const charWidthValue = stringWidth(char);
+        const charWidthValue = measureWidth(char);
         if (chunk !== "" && lineWidth + chunkWidth + charWidthValue > width) {
           appendText({ text: chunk, textWidth: chunkWidth, piece });
           newLine(true);
@@ -264,7 +444,7 @@ export function wrapUtterances({
   maxLines: number;
   showLanguage?: boolean;
 }) {
-  const chunks: { pieces: Piece[]; tag?: Piece }[][] = [];
+  const chunks: WrappedRow[][] = [];
   let rowCount = 0;
 
   for (let u = utterances.length - 1; u >= 0 && rowCount < maxLines; u -= 1) {
@@ -283,7 +463,7 @@ export function wrapUtterances({
         tag: true,
         color: utterance.speaker !== undefined ? speakerColor(utterance.speaker) : undefined,
       };
-      indent = stringWidth(tag.text);
+      indent = measureWidth(tag.text);
       pieces.push(tag);
     }
     const stable = utterance.stable.trimStart();
@@ -292,7 +472,10 @@ export function wrapUtterances({
     if (stable.length > 0) pieces.push({ text: stable, dim: false, italic });
     if (pending.length > 0) pieces.push({ text: pending, dim: true, italic });
 
-    const chunk = wrapFlow({ pieces, width, indent }).map((wrapped) => ({ pieces: wrapped, tag }));
+    const chunk = wrapFlow({ pieces, width, indent }).map((wrapped): WrappedRow => ({
+      pieces: wrapped,
+      tag,
+    }));
     chunks.push(chunk);
     rowCount += chunk.length;
   }
@@ -305,7 +488,7 @@ export function wrapUtterances({
     return kept.map((row) => row.pieces);
   }
 
-  const tagWidth = stringWidth(first.tag.text);
+  const tagWidth = measureWidth(first.tag.text);
   const bodyWidth = width - tagWidth;
   if (bodyWidth <= 0) return [[first.tag], ...kept.slice(1).map((row) => row.pieces)];
 
@@ -317,7 +500,7 @@ export function wrapUtterances({
   let remaining = bodyWidth;
   for (let i = source.length - 1; i >= 0 && remaining > 0; i -= 1) {
     const piece = source[i]!;
-    const pieceWidth = stringWidth(piece.text);
+    const pieceWidth = measureWidth(piece.text);
     if (pieceWidth <= remaining) {
       body.unshift(piece);
       remaining -= pieceWidth;
@@ -327,7 +510,7 @@ export function wrapUtterances({
     let start = chars.length;
     let used = 0;
     while (start > 0) {
-      const cw = stringWidth(chars[start - 1]!);
+      const cw = measureWidth(chars[start - 1]!);
       if (used + cw > remaining) break;
       used += cw;
       start -= 1;

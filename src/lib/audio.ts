@@ -1,8 +1,14 @@
-import { spawnCapture, spawnFailureMessage, stopCaptureChild } from "#/lib/capture-process.js";
+import {
+  killCapture,
+  spawnCapture,
+  spawnFailureMessage,
+  stopCaptureChild,
+} from "#/lib/capture-process.js";
 import type { AudioCapture, AudioOptions } from "#/lib/types.js";
 
 // 100ms × 16kHz × 2 bytes (s16le) — same as desktop / earpop-capture.
 const FRAME_BYTES = 3200;
+const EMPTY_BUFFER = Buffer.alloc(0);
 
 const FIRST_FRAME_TIMEOUT_MS = 10_000;
 const TERM_GRACE_MS = 2_000;
@@ -37,7 +43,7 @@ export function startCapture({ device, onFrame, onError }: AudioOptions) {
     let settled = false;
     let stopped = false;
     let stderr = "";
-    let remainder = Buffer.alloc(0);
+    let remainder = EMPTY_BUFFER;
 
     const fail = (message: string) => {
       if (settled) return;
@@ -46,13 +52,13 @@ export function startCapture({ device, onFrame, onError }: AudioOptions) {
       reject(new Error(message));
     };
 
-    const firstFrameTimer = setTimeout(
-      () =>
-        fail(
-          `No microphone response for ${FIRST_FRAME_TIMEOUT_MS / 1000}s. Check microphone permission and device connection`,
-        ),
-      FIRST_FRAME_TIMEOUT_MS,
-    );
+    const firstFrameTimer = setTimeout(() => {
+      stopped = true;
+      killCapture({ child, force: true });
+      fail(
+        `No microphone response for ${FIRST_FRAME_TIMEOUT_MS / 1000}s. Check microphone permission and device connection`,
+      );
+    }, FIRST_FRAME_TIMEOUT_MS);
 
     child.on("error", (error: NodeJS.ErrnoException) => {
       fail(spawnFailureMessage({ child, error }));
@@ -71,13 +77,19 @@ export function startCapture({ device, onFrame, onError }: AudioOptions) {
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
+      if (stopped) return;
       const data = remainder.length > 0 ? Buffer.concat([remainder, chunk]) : chunk;
       let offset = 0;
-      while (data.length - offset >= FRAME_BYTES) {
-        onFrame(Buffer.from(data.subarray(offset, offset + FRAME_BYTES)));
-        offset += FRAME_BYTES;
+      if (data.length === FRAME_BYTES) {
+        onFrame(data);
+        offset = FRAME_BYTES;
+      } else {
+        while (data.length - offset >= FRAME_BYTES) {
+          onFrame(Buffer.from(data.subarray(offset, offset + FRAME_BYTES)));
+          offset += FRAME_BYTES;
+        }
       }
-      remainder = Buffer.from(data.subarray(offset));
+      remainder = offset < data.length ? Buffer.from(data.subarray(offset)) : EMPTY_BUFFER;
 
       if (!settled) {
         settled = true;

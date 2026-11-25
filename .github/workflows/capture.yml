@@ -48,7 +48,7 @@ jobs:
             apt: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install ALSA headers
         if: matrix.apt
@@ -76,7 +76,7 @@ jobs:
           fi
           node scripts/stage-capture.mjs --package "${{ matrix.package }}" --from "$FROM"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.package }}
           path: npm/${{ matrix.package }}/bin/${{ matrix.bin }}
@@ -86,8 +86,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Place binaries
@@ -101,7 +101,7 @@ jobs:
             chmod +x "npm/${pkg}/bin/"* || true
           done
           find npm -type f -path '*/bin/*' ! -name '.gitkeep' | sort
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: capture-npm-packages
           path: npm/
@@ -114,11 +114,11 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -128,7 +128,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # upload-artifact of path `npm/` stores package dirs at the artifact root (no `npm/` prefix).
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: capture-npm-packages
           path: npm
@@ -172,7 +172,7 @@ jobs:
         run: echo "npm=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           body: |
@@ -190,10 +190,10 @@ jobs:
         run: |
           set -euo pipefail
           DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
-          cp "$INTEGRITY" /tmp/capture-integrity.json
+          cp "$INTEGRITY" "$RUNNER_TEMP/capture-integrity.json"
           git fetch origin "$DEFAULT_BRANCH"
           git checkout -B "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
-          cp /tmp/capture-integrity.json "$INTEGRITY"
+          cp "$RUNNER_TEMP/capture-integrity.json" "$INTEGRITY"
           if git diff --quiet -- "$INTEGRITY"; then
             echo "Integrity map unchanged; skipping commit."
             exit 0

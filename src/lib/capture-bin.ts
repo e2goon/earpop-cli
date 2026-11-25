@@ -90,14 +90,17 @@ function resolveUncached(): CaptureBin {
   }
 
   const root = packageRoot();
-  const release = join(
-    root,
-    "target",
-    "release",
-    process.platform === "win32" ? "earpop-capture.exe" : "earpop-capture",
-  );
-  if (existsSync(release)) {
-    return { ok: true, path: release };
+  // Only load local cargo target builds from a source checkout; installed packages must stay hash-verified.
+  if (existsSync(join(root, "Cargo.toml")) && existsSync(join(root, "crates"))) {
+    const release = join(
+      root,
+      "target",
+      "release",
+      process.platform === "win32" ? "earpop-capture.exe" : "earpop-capture",
+    );
+    if (existsSync(release)) {
+      return { ok: true, path: release };
+    }
   }
 
   const platform = platforms.find((p) => p.os === process.platform && p.cpu === process.arch);

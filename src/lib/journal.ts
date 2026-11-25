@@ -65,6 +65,7 @@ class FileJournal implements Journal {
   private handle: number | null = null;
   private closed = false;
 
+  public hasWritten = false;
   public writeError?: string;
   // Translations have no timestamps; they are filed at the end of the speech they follow.
   private lastSpokenEndMs = 0;
@@ -140,8 +141,8 @@ class FileJournal implements Journal {
 
     try {
       if (this.handle === null) {
-        mkdirSync(transcriptsDir(), { recursive: true });
-        this.handle = openSync(this.path, "a");
+        mkdirSync(transcriptsDir(), { recursive: true, mode: 0o700 });
+        this.handle = openSync(this.path, "a", 0o600);
         appendFileSync(
           this.handle,
           JSON.stringify({
@@ -152,6 +153,7 @@ class FileJournal implements Journal {
         );
       }
       appendFileSync(this.handle, lines);
+      this.hasWritten = true;
     } catch (error) {
       if (this.writeError === undefined) {
         this.writeError = errorMessage(error);

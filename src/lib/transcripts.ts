@@ -1,7 +1,10 @@
-import { open, readFile, readdir } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 
 import { transcriptPath, transcriptsDir } from "#/lib/journal.js";
+import { stripTerminalEscapes } from "#/lib/sanitize.js";
 import { formatStamp } from "#/lib/transcript-formats.js";
 import type { Token } from "#/lib/types.js";
 
@@ -33,7 +36,7 @@ interface ParsedLine {
 }
 
 function assertValidId(id: string) {
-  if (!/^[\w][\w.-]*$/.test(id)) {
+  if (!/^[\w][\w.-]*$/.test(id) || id.includes("..")) {
     throw new Error(`Invalid transcript ID: ${id}`);
   }
 }
@@ -50,14 +53,6 @@ function parseLine(raw: string) {
   } catch {
     return null;
   }
-}
-
-async function readLines(id: string) {
-  const content = await readFile(transcriptPath(id), "utf8");
-  return content
-    .split("\n")
-    .map(parseLine)
-    .filter((line): line is ParsedLine => line !== null);
 }
 
 // Listing reads only the meeting header and the last lines, so long transcripts stay cheap.
@@ -108,7 +103,7 @@ export async function listTranscripts() {
           id,
           startedAt:
             meeting?.kind === "meeting" && typeof meeting.started_at === "string"
-              ? meeting.started_at
+              ? stripTerminalEscapes(meeting.started_at)
               : "(no timestamp)",
           duration: formatStamp(lastAtMs),
         };
@@ -124,27 +119,51 @@ export async function listTranscripts() {
 
 export async function readTranscript(id: string) {
   assertValidId(id);
-  const lines = await readLines(id);
-  const meeting = lines.find((line) => line.kind === "meeting");
-
+  let startedAt = "";
+  let model = "";
   const tokens: TranscriptToken[] = [];
-  for (const line of lines) {
-    if (line.kind !== "token") continue;
-    if (typeof line.text !== "string" || typeof line.at_ms !== "number") continue;
-    const token: TranscriptToken = { text: line.text, isFinal: true, atMs: line.at_ms };
-    if (typeof line.speaker === "string") token.speaker = line.speaker;
-    if (typeof line.language === "string") token.language = line.language;
-    if (typeof line.end_ms === "number") token.endMs = line.end_ms;
-    if (line.translation === true) {
-      token.translation = true;
-      if (typeof line.source_language === "string") token.sourceLanguage = line.source_language;
+
+  const stream = createReadStream(transcriptPath(id), { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const raw of reader) {
+      const line = parseLine(raw);
+      if (line === null) continue;
+      if (line.kind === "meeting") {
+        if (startedAt === "" && typeof line.started_at === "string") {
+          startedAt = stripTerminalEscapes(line.started_at);
+        }
+        if (model === "" && typeof line.model === "string") {
+          model = stripTerminalEscapes(line.model);
+        }
+        continue;
+      }
+      if (line.kind !== "token") continue;
+      if (typeof line.text !== "string" || typeof line.at_ms !== "number") continue;
+      const token: TranscriptToken = {
+        text: stripTerminalEscapes(line.text),
+        isFinal: true,
+        atMs: line.at_ms,
+      };
+      if (typeof line.speaker === "string") token.speaker = stripTerminalEscapes(line.speaker);
+      if (typeof line.language === "string") token.language = stripTerminalEscapes(line.language);
+      if (typeof line.end_ms === "number") token.endMs = line.end_ms;
+      if (line.translation === true) {
+        token.translation = true;
+        if (typeof line.source_language === "string") {
+          token.sourceLanguage = stripTerminalEscapes(line.source_language);
+        }
+      }
+      tokens.push(token);
     }
-    tokens.push(token);
+  } finally {
+    reader.close();
+    stream.destroy();
   }
 
   return {
-    startedAt: typeof meeting?.started_at === "string" ? meeting.started_at : "",
-    model: typeof meeting?.model === "string" ? meeting.model : "",
+    startedAt,
+    model,
     tokens,
   } satisfies Transcript;
 }

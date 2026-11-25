@@ -2,6 +2,8 @@ import { killCapture, spawnCapture, spawnFailureMessage } from "#/lib/capture-pr
 import type { Microphone } from "#/lib/types.js";
 
 const DEVICE_LIST_TIMEOUT_MS = 5_000;
+const MAX_STDOUT_CHARS = 1_048_576;
+const MAX_STDERR_CHARS = 8_192;
 
 interface ListedMic {
   name?: unknown;
@@ -12,32 +14,55 @@ export async function listMicrophones() {
   const child = spawnCapture(["list"]);
 
   const raw = await new Promise<string>((resolve, reject) => {
+    let settled = false;
     let stdout = "";
     let stderr = "";
+
+    const finish = (outcome: { ok: true; value: string } | { ok: false; error: Error }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (outcome.ok) resolve(outcome.value);
+      else reject(outcome.error);
+    };
+
     const timer = setTimeout(() => {
       killCapture({ child, force: true });
-      reject(new Error(`Timed out listing microphones after ${DEVICE_LIST_TIMEOUT_MS / 1000}s`));
+      finish({
+        ok: false,
+        error: new Error(`Timed out listing microphones after ${DEVICE_LIST_TIMEOUT_MS / 1000}s`),
+      });
     }, DEVICE_LIST_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
+      if (stdout.length > MAX_STDOUT_CHARS) {
+        killCapture({ child, force: true });
+        finish({
+          ok: false,
+          error: new Error("Capture helper exceeded microphone list output limit"),
+        });
+      }
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      if (stderr.length < MAX_STDERR_CHARS) {
+        stderr = (stderr + chunk.toString()).slice(-MAX_STDERR_CHARS);
+      }
     });
     child.on("error", (error: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      reject(new Error(spawnFailureMessage({ child, error })));
+      finish({ ok: false, error: new Error(spawnFailureMessage({ child, error })) });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
       if (code !== 0) {
-        reject(
-          new Error(stderr.trim() || `Failed to list microphones (exit ${code ?? "unknown"})`),
-        );
+        finish({
+          ok: false,
+          error: new Error(
+            stderr.trim() || `Failed to list microphones (exit ${code ?? "unknown"})`,
+          ),
+        });
         return;
       }
-      resolve(stdout);
+      finish({ ok: true, value: stdout });
     });
   });
 

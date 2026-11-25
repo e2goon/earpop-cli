@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 
 import { runTermsCommand } from "#/app/terms-command.js";
 import { runTranscriptsCommand } from "#/app/transcripts-command.js";
+import { runUsageCommand } from "#/app/usage-command.js";
 import { deleteApiKey } from "#/lib/api-key.js";
 import { errorMessage } from "#/lib/errors.js";
 import { listLanguages, parseLanguageList } from "#/lib/languages.js";
@@ -26,6 +27,7 @@ const HELP = [
   "                               --format txt|srt|vtt|md, --out <path>",
   "  earpop languages             List supported language codes",
   "  earpop terms [add|remove]    Words and names to spell as listed",
+  "  earpop usage [--days <n>]    Show Soniox project usage and cost",
   "  earpop auth clear            Delete the saved API key",
   "  earpop --version             Print the version",
 ].join("\n");
@@ -101,6 +103,14 @@ function main() {
 
   if (command === "terms") {
     void runTermsCommand(rest).catch((error: unknown) => {
+      console.error(errorMessage(error));
+      process.exitCode = 1;
+    });
+    return;
+  }
+
+  if (command === "usage") {
+    void runUsageCommand(rest).catch((error: unknown) => {
       console.error(errorMessage(error));
       process.exitCode = 1;
     });
