@@ -1,6 +1,6 @@
 {
   "name": "earpop-capture-linux-x64",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "earpop-cli microphone capture sidecar (linux x64)",
   "license": "MIT",
   "os": [
